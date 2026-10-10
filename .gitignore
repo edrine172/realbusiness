@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+backend/db.sqlite3
+
+# Node
+node_modules/
+frontend/dist/
+frontend/tsconfig.tsbuildinfo
+frontend/.env.local
+
+# Editors
+.vscode/*.log
+.idea/

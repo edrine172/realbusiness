@@ -1,0 +1,5 @@
+.overview-flow-controls{display:flex;align-items:center;justify-content:flex-end;gap:6px;flex-wrap:wrap}
+.overview-flow-controls .catalog-select{min-width:142px}
+.overview-flow-month-picker{width:142px;height:29px;padding:0 7px;border:1px solid #edf0f6;border-radius:5px;background:#fff;color:#536177;font:inherit;font-size:9px}
+.overview-flow-month-picker:focus{border-color:#91afea;outline:2px solid #eaf1ff}
+@media(max-width:480px){.overview-flow-controls{max-width:100%}.overview-flow-controls .catalog-select,.overview-flow-month-picker{width:100%}}

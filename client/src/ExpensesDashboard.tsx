@@ -1,0 +1,219 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowUpRight, Check, ChevronDown, CircleAlert, Plus, ReceiptText, RefreshCw, Search, ShieldCheck, Wallet, X } from 'lucide-react';
+import { api, formatCurrency as currency, type Expense, type ExpenseBudget, type ExpenseInput, type ExpenseSummary } from './api';
+import { downloadSpreadsheet, readSpreadsheetRows } from './fileFormats';
+import FileActionMenu from './FileActionMenu';
+
+type ExpenseTrend = 'all' | 'operational' | 'freight' | 'capital';
+type ReceiptFilter = 'all' | 'verified' | 'missing';
+const localDate = () => {
+  const today = new Date();
+  return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+};
+const expenseTypes: Array<{ value: ExpenseTrend; label: string }> = [
+  { value: 'all', label: 'All' },
+  { value: 'operational', label: 'Operational' },
+  { value: 'freight', label: 'Freight' },
+  { value: 'capital', label: 'CapEx' },
+];
+const expenseCategories = ['Logistics & Freight', 'Facilities & Maintenance', 'Software & Cloud', 'Packaging & Supplies', 'Utilities & Cloud', 'Office & Admin', 'Other'];
+
+function ExpenseForm({ categories, onClose, onSaved }: {
+  categories: string[];
+  onClose: () => void;
+  onSaved: () => Promise<void>;
+}) {
+  const [draft, setDraft] = useState({
+    merchant: '', description: '', category: categories[0] ?? 'Logistics & Freight', cost_center: '',
+    expense_type: 'operational' as ExpenseInput['expense_type'], amount_before_tax: '', tax_amount: '0.00',
+    payment_method: 'bank' as ExpenseInput['payment_method'], status: 'pending' as ExpenseInput['status'],
+    reference: '', expense_date: localDate(), receipt_received: false,
+    receipt_verified: false, entered_by: 'Elena Vance',
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const total = Number(draft.amount_before_tax || 0) + Number(draft.tax_amount || 0);
+  const update = (key: keyof typeof draft, value: string | boolean) => setDraft((current) => ({ ...current, [key]: value }));
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSaving(true);
+    setError('');
+    try {
+      await api.createExpense({ ...draft, amount_before_tax: draft.amount_before_tax, tax_amount: draft.tax_amount, receipt_verified: draft.receipt_received && draft.receipt_verified });
+      await onSaved();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not record this expense.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return <div className="catalog-overlay" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><form className="catalog-modal expense-form-modal" onSubmit={submit}>
+    <div className="catalog-modal-heading"><div><span className="catalog-eyebrow">FINANCE &amp; ACCOUNTING</span><h2>Record expense</h2><p>Capture vendor spend, tax, receipt, and approval details.</p></div><button className="catalog-icon-button" type="button" onClick={onClose} aria-label="Close"><X size={18}/></button></div>
+    <div className="catalog-form-row"><label className="catalog-field">Merchant<input required maxLength={160} value={draft.merchant} onChange={(event) => update('merchant', event.target.value)} placeholder="Vendor or merchant name"/></label><label className="catalog-field">Expense date<input required type="date" value={draft.expense_date} onChange={(event) => update('expense_date', event.target.value)}/></label></div>
+    <label className="catalog-field">Description<input required maxLength={240} value={draft.description} onChange={(event) => update('description', event.target.value)} placeholder="What was purchased or paid for?"/></label>
+    <div className="catalog-form-row"><label className="catalog-field">Category<select value={draft.category} onChange={(event) => update('category', event.target.value)}>{[...new Set([...expenseCategories, ...categories])].map((category) => <option key={category}>{category}</option>)}</select></label><label className="catalog-field">Cost center<input maxLength={80} value={draft.cost_center} onChange={(event) => update('cost_center', event.target.value)} placeholder="Warehouse & Logistics"/></label></div>
+    <div className="catalog-form-row"><label className="catalog-field">Expense type<select value={draft.expense_type} onChange={(event) => update('expense_type', event.target.value as ExpenseInput['expense_type'])}><option value="operational">Operational</option><option value="freight">Freight</option><option value="capital">Capital expenditure</option></select></label><label className="catalog-field">Payment method<select value={draft.payment_method} onChange={(event) => update('payment_method', event.target.value as ExpenseInput['payment_method'])}><option value="bank">ACH / wire</option><option value="card">Card</option><option value="cash">Cash</option><option value="check">Check</option><option value="petty_cash">Petty cash</option></select></label></div>
+    <div className="catalog-form-row"><label className="catalog-field">Amount before tax<input type="number" min="0.01" step="0.01" required value={draft.amount_before_tax} onChange={(event) => update('amount_before_tax', event.target.value)}/></label><label className="catalog-field">Tax amount<input type="number" min="0" step="0.01" value={draft.tax_amount} onChange={(event) => update('tax_amount', event.target.value)}/></label></div>
+    <div className="catalog-form-row"><label className="catalog-field">Voucher / invoice reference<input maxLength={80} value={draft.reference} onChange={(event) => update('reference', event.target.value)}/></label><label className="catalog-field">Approval status<select value={draft.status} onChange={(event) => update('status', event.target.value as ExpenseInput['status'])}><option value="pending">Pending approval</option><option value="approved">Approved</option><option value="paid">Paid</option></select></label></div>
+    <div className="expense-receipt-options"><label><input type="checkbox" checked={draft.receipt_received} onChange={(event) => { update('receipt_received', event.target.checked); if (!event.target.checked) update('receipt_verified', false); }}/>Receipt received</label><label><input type="checkbox" disabled={!draft.receipt_received} checked={draft.receipt_verified} onChange={(event) => update('receipt_verified', event.target.checked)}/>Receipt verified</label><strong>Total {currency(total)}</strong></div>
+    {error && <p className="catalog-form-error">{error}</p>}
+    <div className="catalog-modal-actions"><button type="button" className="catalog-button catalog-button-light" onClick={onClose}>Cancel</button><button className="catalog-button catalog-button-primary" disabled={saving}>{saving ? 'Saving…' : 'Record expense'}</button></div>
+  </form></div>;
+}
+
+function BudgetForm({ initial, onClose, onSaved }: {
+  initial: ExpenseBudget | null;
+  onClose: () => void;
+  onSaved: (budget: Pick<ExpenseBudget, 'category' | 'monthly_limit' | 'cost_center' | 'manager'>) => Promise<void>;
+}) {
+  const [category, setCategory] = useState(initial?.category ?? '');
+  const [monthlyLimit, setMonthlyLimit] = useState(initial?.monthly_limit ?? '');
+  const [costCenter, setCostCenter] = useState(initial?.cost_center ?? '');
+  const [manager, setManager] = useState(initial?.manager ?? '');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSaving(true);
+    try { await onSaved({ category, monthly_limit: monthlyLimit, cost_center: costCenter, manager }); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not save this budget.'); }
+    finally { setSaving(false); }
+  }
+  return <div className="catalog-overlay" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><form className="catalog-modal expense-budget-modal" onSubmit={submit}>
+    <div className="catalog-modal-heading"><div><span className="catalog-eyebrow">BUDGET GUARDRAILS</span><h2>{initial ? 'Update category budget' : 'Set category budget'}</h2><p>Monthly spend limits help flag overages early.</p></div><button className="catalog-icon-button" type="button" onClick={onClose} aria-label="Close"><X size={18}/></button></div>
+    <label className="catalog-field">Category<input required maxLength={80} value={category} onChange={(event) => setCategory(event.target.value)} disabled={Boolean(initial)}/></label>
+    <label className="catalog-field">Monthly budget<input required type="number" min="0.01" step="0.01" value={monthlyLimit} onChange={(event) => setMonthlyLimit(event.target.value)}/></label>
+    <div className="catalog-form-row"><label className="catalog-field">Cost center<input maxLength={80} value={costCenter} onChange={(event) => setCostCenter(event.target.value)}/></label><label className="catalog-field">Budget owner<input maxLength={120} value={manager} onChange={(event) => setManager(event.target.value)}/></label></div>
+    {error && <p className="catalog-form-error">{error}</p>}
+    <div className="catalog-modal-actions"><button type="button" className="catalog-button catalog-button-light" onClick={onClose}>Cancel</button><button className="catalog-button catalog-button-primary" disabled={saving}>{saving ? 'Saving…' : 'Save budget'}</button></div>
+  </form></div>;
+}
+
+export default function ExpensesDashboard({ onOpenReports }: { onOpenReports: () => void }) {
+  const [summary, setSummary] = useState<ExpenseSummary | null>(null);
+  const [month, setMonth] = useState(localDate().slice(0, 7));
+  const [categoryFilter, setCategoryFilter] = useState('all');
+  const [paymentFilter, setPaymentFilter] = useState('all');
+  const [receiptFilter, setReceiptFilter] = useState<ReceiptFilter>('all');
+  const [search, setSearch] = useState('');
+  const [trend, setTrend] = useState<ExpenseTrend>('all');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [showExpenseForm, setShowExpenseForm] = useState(false);
+  const [budgetTarget, setBudgetTarget] = useState<ExpenseBudget | null | undefined>(undefined);
+  const [busyId, setBusyId] = useState<number | null>(null);
+  const [notice, setNotice] = useState('');
+
+  async function loadSummary() {
+    setLoading(true);
+    setError('');
+    try { setSummary(await api.expenseSummary(month)); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : 'The expense service could not be reached.'); }
+    finally { setLoading(false); }
+  }
+
+  useEffect(() => { void loadSummary(); }, [month]);
+
+  const expenses = useMemo(() => (summary?.expenses ?? []).filter((expense) => {
+    const term = search.trim().toLowerCase();
+    const matchesSearch = !term || `${expense.expense_number} ${expense.merchant} ${expense.description} ${expense.reference} ${expense.cost_center}`.toLowerCase().includes(term);
+    const matchesCategory = categoryFilter === 'all' || expense.category === categoryFilter;
+    const matchesPayment = paymentFilter === 'all' || expense.payment_method === paymentFilter;
+    const matchesReceipt = receiptFilter === 'all' || (receiptFilter === 'verified' ? expense.receipt_verified : !expense.receipt_received);
+    return matchesSearch && matchesCategory && matchesPayment && matchesReceipt;
+  }), [summary, search, categoryFilter, paymentFilter, receiptFilter]);
+  const chartData = summary?.daily_series ?? [];
+  const selectedSeries = chartData.map((day) => trend === 'all' ? day.total : day[trend]);
+  const maximumSpend = Math.max(...selectedSeries, 1);
+
+  async function updateStatus(expense: Expense, status: Expense['status']) {
+    setBusyId(expense.id);
+    try {
+      await api.updateExpense(expense.id, { status });
+      await loadSummary();
+      setNotice(`${expense.expense_number} updated to ${status}.`);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not update expense status.'); }
+    finally { setBusyId(null); }
+  }
+
+  async function saveBudget(input: Pick<ExpenseBudget, 'category' | 'monthly_limit' | 'cost_center' | 'manager'>) {
+    if (budgetTarget) await api.updateExpenseBudget(budgetTarget.id, input);
+    else await api.createExpenseBudget(input);
+    setBudgetTarget(undefined);
+    await loadSummary();
+    setNotice('Budget guardrail saved.');
+  }
+
+  function expenseExportRows(): unknown[][] {
+    return [
+      ['merchant', 'description', 'category', 'cost_center', 'expense_type', 'amount_before_tax', 'tax_amount', 'payment_method', 'status', 'reference', 'expense_date', 'receipt_received', 'receipt_verified', 'entered_by'],
+      ...expenses.map((expense) => [expense.merchant, expense.description, expense.category, expense.cost_center, expense.expense_type, expense.amount_before_tax, expense.tax_amount, expense.payment_method, expense.status, expense.reference, expense.expense_date, expense.receipt_received, expense.receipt_verified, expense.entered_by]),
+    ];
+  }
+  function exportCsv() {
+    const rows = expenseExportRows();
+    const csv = rows.map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(',')).join('\r\n');
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `stockpulse-expenses-${month}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+  async function exportXlsx() {
+    try { await downloadSpreadsheet(`stockpulse-expenses-${month}.xlsx`, 'Expenses', expenseExportRows()); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : 'Excel export failed.'); }
+  }
+
+  async function uploadExpenses(file?: File) {
+    if (!file) return;
+    setError('');
+    try {
+      const [header, ...lines] = await readSpreadsheetRows(file);
+      if (!header || !lines.length) throw new Error('The file does not contain any expense rows.');
+      const indexes = new Map(header.map((value, index) => [value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, ''), index]));
+      const value = (row: string[], key: string) => row[indexes.get(key) ?? -1]?.trim() ?? '';
+      const imported: ExpenseInput[] = lines.map((row) => ({
+        merchant: value(row, 'merchant'), description: value(row, 'description'), category: value(row, 'category'),
+        cost_center: value(row, 'cost_center'), expense_type: (value(row, 'expense_type') || 'operational') as ExpenseInput['expense_type'],
+        amount_before_tax: value(row, 'amount_before_tax'), tax_amount: value(row, 'tax_amount') || '0.00',
+        payment_method: (value(row, 'payment_method') || 'bank') as ExpenseInput['payment_method'],
+        status: (value(row, 'status') || 'pending') as ExpenseInput['status'], reference: value(row, 'reference'),
+        expense_date: value(row, 'expense_date') || `${month}-01`, receipt_received: value(row, 'receipt_received').toLowerCase() === 'true',
+        receipt_verified: value(row, 'receipt_verified').toLowerCase() === 'true', entered_by: value(row, 'entered_by'),
+      }));
+      await api.bulkCreateExpenses(imported);
+      await loadSummary();
+      setNotice(`${imported.length} expense records imported.`);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Expense upload failed. Check the file columns and values.'); }
+    finally { if (fileInputRef.current) fileInputRef.current.value = ''; }
+  }
+
+  function chooseExpenseImport(accept: string) {
+    if (!fileInputRef.current) return;
+    fileInputRef.current.accept = accept;
+    fileInputRef.current.click();
+  }
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  return <>
+    <section className="catalog-heading expenses-heading"><div><div className="catalog-breadcrumb">Finance &amp; Accounting <span>›</span> <b>Expenses Ledger</b></div><h1>Expenses &amp; Disbursements</h1><p>Track operating expenses, vendor overhead, and receipt audit trails across business units.</p></div><div className="catalog-heading-actions"><FileActionMenu label="Import" direction="import" options={[{ label: 'CSV file', onSelect: () => chooseExpenseImport('.csv,text/csv') }, { label: 'Excel workbook', onSelect: () => chooseExpenseImport('.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel') }]}/><input ref={fileInputRef} className="catalog-hidden" type="file" onChange={(event) => void uploadExpenses(event.target.files?.[0])}/><FileActionMenu label="Export" direction="export" options={[{ label: 'CSV file', onSelect: exportCsv, disabled: !expenses.length }, { label: 'Excel workbook', onSelect: () => void exportXlsx(), disabled: !expenses.length }]}/><button className="catalog-button catalog-button-primary" onClick={() => setShowExpenseForm(true)}><Plus size={14}/>Record expense</button></div></section>
+    <div className="expenses-period-row"><span>Month-to-date ledger</span><label className="catalog-select"><input aria-label="Expense month" type="month" value={month} onChange={(event) => setMonth(event.target.value)}/><ChevronDown size={12}/></label><button className="overview-text-action" onClick={onOpenReports}>Financial reports →</button></div>
+    {loading && <section className="overview-state">Loading expense ledger…</section>}
+    {!loading && error && !summary && <section className="overview-state overview-error"><strong>Could not load expenses</strong><span>{error}</span><button className="catalog-button catalog-button-light" onClick={() => void loadSummary()}><RefreshCw size={14}/>Retry</button></section>}
+    {!loading && summary && <>
+      <section className="expenses-metrics"><article><div><span>TOTAL MTD EXPENSES</span><ReceiptText size={14}/></div><strong>{currency(summary.total_expenses)}</strong><small><ArrowUpRight size={11}/> {summary.expense_count} expense records</small></article><article className="pending"><div><span>PENDING APPROVAL</span><CircleAlert size={14}/></div><strong>{currency(summary.pending_approval)}</strong><small>{summary.pending_count} vouchers awaiting sign-off</small></article><article><div><span>LARGEST CATEGORY</span><Wallet size={14}/></div><strong className="expense-largest-category">{summary.largest_category?.name ?? '—'}</strong><small>{summary.largest_category ? `${currency(summary.largest_category.total)} recorded · ${summary.largest_category.percent}% of spend` : 'No expenses recorded'}</small></article><article className="tax-reclaimable"><div><span>TAX RECLAIMABLE</span><ShieldCheck size={14}/></div><strong>{currency(summary.tax_reclaimable)}</strong><small>{summary.verified_receipts} verified receipts</small></article></section>
+      <div className="expenses-insight-grid"><section className="overview-panel expense-trend-panel"><div className="overview-panel-heading"><div><span>MONTHLY EXPENSE VELOCITY</span><h2>Spend distribution</h2></div><div className="expense-trend-tabs" role="tablist" aria-label="Expense type">{expenseTypes.map((item) => <button key={item.value} className={trend === item.value ? 'active' : ''} onClick={() => setTrend(item.value)}>{item.label}</button>)}</div></div><div className="expense-trend-chart" role="img" aria-label={`${trend} daily expense trend`}>{chartData.map((day, index) => <div key={day.label} title={`${day.label}: ${currency(selectedSeries[index])}`}><i style={{ height: `${selectedSeries[index] ? Math.max(selectedSeries[index] / maximumSpend * 100, 2) : 0}%` }}/></div>)}</div><div className="expense-trend-labels"><span>{summary.start_date}</span><span>{summary.end_date}</span></div><div className="expense-category-heading"><div><span>OVERALL ALLOCATION</span><strong>{currency(summary.total_expenses)} MTD</strong></div><button className="overview-text-action" onClick={onOpenReports}>{summary.categories.length} categories active</button></div><div className="expense-allocation-bar">{summary.categories.slice(0, 6).map((category, index) => <i key={category.name} title={`${category.name}: ${currency(category.total)}`} style={{ width: `${category.percent}%`, background: ['#2865e9', '#7f9bea', '#aab8d8', '#c8d1e3', '#43bd8b', '#e6a23c'][index % 6] }}/>)}</div><div className="expense-category-legend">{summary.categories.slice(0, 5).map((category, index) => <span key={category.name}><i style={{ background: ['#2865e9', '#7f9bea', '#aab8d8', '#c8d1e3', '#43bd8b'][index % 5] }}/>{category.name} <strong>{currency(category.total)}</strong></span>)}</div></section>
+        <section className="overview-panel expense-budget-panel"><div className="overview-panel-heading"><div><span>BUDGET GUARDRAILS</span><h2>Monthly caps vs. actual spend</h2></div><button className="catalog-clear" onClick={() => setBudgetTarget(null)}><Plus size={12}/>Add budget</button></div>{summary.budgets.map((budget) => <div className="expense-budget-row" key={budget.id}><div><strong>{budget.category}</strong><span>{currency(budget.spent)} / {currency(budget.monthly_limit)}</span><b className={budget.percent_used > 100 ? 'over-budget' : ''}>{budget.percent_used}%</b></div><div className="expense-budget-track"><i className={budget.percent_used > 100 ? 'over-budget' : ''} style={{ width: `${Math.min(budget.percent_used, 100)}%` }}/></div></div>)}{!summary.budgets.length && <div className="expense-budget-empty"><p>No category budgets configured.</p><button className="catalog-button catalog-button-light" onClick={() => setBudgetTarget(null)}><Plus size={13}/>Set a budget</button></div>}<div className="expense-budget-note"><ShieldCheck size={13}/><span>Budget status updates as expenses are recorded.</span></div></section></div>
+      {error && <div className="expense-inline-error"><CircleAlert size={13}/>{error}</div>}
+      {notice && <div className="catalog-toast"><Check size={15}/>{notice}<button onClick={() => setNotice('')} aria-label="Dismiss"><X size={14}/></button></div>}
+      <section className="catalog-filter-panel expense-filters"><div className="catalog-filter-row"><label className="catalog-search product-search"><Search size={14}/><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search voucher, merchant, description"/></label><label className="catalog-select"><select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}><option value="all">All categories</option>{summary.categories.map((category) => <option key={category.name} value={category.name}>{category.name}</option>)}</select><ChevronDown size={12}/></label><label className="catalog-select"><select value={paymentFilter} onChange={(event) => setPaymentFilter(event.target.value)}><option value="all">All payment methods</option><option value="card">Card</option><option value="bank">ACH / wire</option><option value="cash">Cash</option><option value="check">Check</option><option value="petty_cash">Petty cash</option></select><ChevronDown size={12}/></label><label className="catalog-select"><select value={receiptFilter} onChange={(event) => setReceiptFilter(event.target.value as ReceiptFilter)}><option value="all">All receipts</option><option value="verified">Verified</option><option value="missing">Missing</option></select><ChevronDown size={12}/></label><span className="expense-date-range">{summary.start_date} – {summary.end_date}</span></div></section>
+      <section className="catalog-table-panel expense-table-panel"><div className="catalog-table-scroll"><table className="catalog-table expense-table"><thead><tr><th>EXPENSE / VOUCHER #</th><th>MERCHANT &amp; DESCRIPTION</th><th>COST CENTER</th><th>AMOUNT &amp; TAX</th><th>PAYMENT</th><th>STATUS</th><th>RECEIPT</th><th>ACTION</th></tr></thead><tbody>{expenses.map((expense) => <tr key={expense.id}><td><strong className="expense-number">{expense.expense_number}</strong><small>{new Date(`${expense.expense_date}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</small></td><td><strong className="expense-merchant">{expense.merchant}</strong><small>{expense.description}</small></td><td><span className="expense-cost-center">{expense.cost_center || expense.category}</span></td><td><strong>{currency(expense.total_amount)}</strong><small>{expense.tax_amount === '0.00' ? 'Tax exempt' : `Incl. ${currency(expense.tax_amount)} tax`}</small></td><td>{expense.payment_method_display}</td><td><span className={`expense-status ${expense.status}`}>{expense.status_display}</span></td><td><span className={`expense-receipt-status ${expense.receipt_verified ? 'verified' : expense.receipt_received ? 'received' : 'missing'}`}>{expense.receipt_verified ? 'Verified' : expense.receipt_received ? 'Received' : 'Missing'}</span></td><td><select className="expense-status-select" aria-label={`Update ${expense.expense_number} status`} disabled={busyId === expense.id} value={expense.status} onChange={(event) => void updateStatus(expense, event.target.value as Expense['status'])}><option value="pending">Pending</option><option value="approved">Approved</option><option value="paid">Paid</option><option value="rejected">Rejected</option></select></td></tr>)}{!expenses.length && <tr><td colSpan={8} className="catalog-state">No expenses match these filters.</td></tr>}</tbody></table></div><footer className="catalog-table-footer"><span>Showing <b>{expenses.length}</b> of <b>{summary.expense_count}</b> records</span><button className="catalog-clear" onClick={() => { setSearch(''); setCategoryFilter('all'); setPaymentFilter('all'); setReceiptFilter('all'); }}>Clear filters</button></footer></section>
+    </>}
+    {showExpenseForm && <ExpenseForm categories={(summary?.categories ?? []).map((category) => category.name)} onClose={() => setShowExpenseForm(false)} onSaved={async () => { setShowExpenseForm(false); await loadSummary(); setNotice('Expense recorded in the ledger.'); }}/ >}
+    {budgetTarget !== undefined && <BudgetForm initial={budgetTarget} onClose={() => setBudgetTarget(undefined)} onSaved={saveBudget}/>}
+  </>;
+}

@@ -1,0 +1,83 @@
+.staff-attendance-panel{margin:0 0 12px;padding:13px;border:1px solid #e8edf5;border-radius:8px;background:#fff}
+.staff-attendance-panel .staff-section-heading{align-items:center;margin-bottom:9px}
+.staff-attendance-panel .staff-section-heading>div{display:flex;align-items:center;gap:9px}
+.staff-attendance-panel .staff-section-heading h2{margin:0;color:#25334a;font:700 13px Manrope,sans-serif}
+.staff-attendance-panel .staff-section-heading p{margin:3px 0 0;color:#78869b;font-size:9px}
+.staff-attendance-selected-date{display:flex;flex-direction:column;gap:3px;text-align:right}
+.staff-attendance-selected-date span{color:#77849a;font-size:8px}
+.staff-attendance-selected-date strong{color:#34445b;font-size:10px}
+.staff-attendance-summary{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 10px;margin-bottom:8px;border-radius:5px;background:#f4f7fc;color:#697991;font-size:9px}
+.staff-attendance-summary strong{color:#2563c7;font-size:11px}
+.staff-calendar{margin:8px 0 12px;padding:9px;border:1px solid #e8edf5;border-radius:6px;background:#fbfcfe}
+.staff-calendar-weekdays,.staff-calendar-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:5px}
+.staff-calendar-weekdays{margin-bottom:5px}
+.staff-calendar-weekdays span{text-align:center;color:#7b899e;font-size:8px;font-weight:700}
+.staff-calendar-day,.staff-calendar-blank{min-width:0;min-height:66px}
+.staff-calendar-day{display:flex;flex-direction:column;align-items:flex-start;gap:4px;padding:6px;border:1px solid #e2e8f0;border-radius:5px;background:#fff;color:#5d6b80;text-align:left}
+.staff-calendar-day:hover:not(:disabled){border-color:#8cb0ed;background:#f5f8ff}
+.staff-calendar-day:disabled{cursor:not-allowed;opacity:.4}
+.staff-calendar-day>strong{color:#27364d;font-size:10px}
+.staff-calendar-day>span{max-width:100%;overflow:hidden;color:#5a718f;font-size:7px;text-overflow:ellipsis;white-space:nowrap}
+.staff-calendar-day>small{max-width:100%;overflow:hidden;color:#36735c;font-size:7px;text-overflow:ellipsis;white-space:nowrap}
+.staff-calendar-day.has-records{border-color:#b9d7c8;background:#f3faf6}
+.staff-calendar-day.is-selected{border-color:#2463c7;background:#edf4ff;box-shadow:inset 0 0 0 1px #2463c7}
+.staff-calendar-day.is-selected>strong{color:#174fa8}
+.staff-calendar-day>.staff-calendar-empty{color:#a0aaba}
+.staff-attendance-table{min-width:650px}
+.staff-attendance-table th,.staff-attendance-table td{padding:8px 10px}
+.staff-attendance-table td:first-child strong,.staff-attendance-table td:first-child small{display:block}
+.staff-attendance-table td:first-child small{margin-top:3px;color:#8290a4;font-size:8px}
+.staff-attendance-check{display:inline-flex;align-items:center;gap:7px;color:#536279;font-size:9px;cursor:pointer}
+.staff-attendance-check input{width:15px;height:15px;accent-color:#2563c7}
+.staff-attendance-target{color:#5f718a;font-size:9px;font-weight:600;white-space:nowrap}
+.staff-attendance-wage{width:150px;min-height:29px;padding:5px 8px;border:1px solid #dfe5ee;border-radius:5px;background:#fff;color:#29374d;font-size:10px}
+.staff-attendance-wage:disabled{background:#f3f5f8;color:#9aa5b3}
+.staff-attendance-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-top:9px;color:#77869b;font-size:8px}
+.staff-attendance-footer .catalog-button{flex:none}
+.staff-attendance-panel .staff-history-empty{padding:15px 8px;text-align:center}
+.staff-attendance-workers{display:flex;gap:6px;overflow-x:auto;margin:8px 0;padding:1px 1px 5px;scrollbar-width:thin}
+.staff-attendance-workers button{min-width:100px;max-width:160px;display:grid;gap:3px;flex:none;padding:7px 9px;border:1px solid #e2e8f0;border-radius:5px;background:#fff;color:#40506a;text-align:left}
+.staff-attendance-workers button.is-selected{border-color:#2865e9;background:#eef4ff;color:#2457b6}
+.staff-attendance-workers strong,.staff-attendance-workers small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.staff-attendance-workers strong{font-size:8px}
+.staff-attendance-workers small{color:#8490a2;font-size:7px}
+.staff-calendar-day.is-worked{border-color:#b9d7c8;background:#f1faf5}
+.staff-calendar-day.is-absent{border-color:#efd3d0;background:#fff5f3}
+.staff-calendar-day.is-unrecorded,.staff-calendar-day.is-not-employed{border-color:#e2e7ee;background:#f5f6f8}
+.staff-calendar-day.is-selected.is-worked{border-color:#2463c7;box-shadow:inset 0 0 0 1px #2463c7}
+.staff-calendar-day.is-selected.is-absent{border-color:#2463c7;box-shadow:inset 0 0 0 1px #2463c7}
+.staff-calendar-day.is-worked>span{color:#397a5d}
+.staff-calendar-day.is-absent>span{color:#a84b43}
+.staff-attendance-worker-link{display:grid;gap:3px;padding:0;border:0;background:transparent;color:#354258;text-align:left}
+.staff-attendance-worker-link strong,.staff-attendance-worker-link small{display:block}
+.staff-attendance-worker-link small{margin-top:3px;color:#8290a4;font-size:8px}
+.staff-attendance-not-applicable{color:#9aa5b3}
+.staff-attendance-table tr.is-selected-worker td{background:#f2f6ff}
+.staff-attendance-table tr.is-selected-worker:hover td{background:#edf3ff}
+.staff-attendance-header-actions{display:flex;align-items:center;gap:14px}
+.staff-attendance-month-select{display:grid;gap:3px;text-align:left}
+.staff-attendance-month-select>span{color:#77849a;font-size:8px}
+.staff-attendance-month-select input{width:132px;height:29px;padding:0 7px;border:1px solid #dfe5ee;border-radius:5px;background:#fff;color:#34445b;font:inherit;font-size:9px}
+.staff-attendance-month-select input:focus{border-color:#91afea;outline:2px solid #eaf1ff}
+.staff-attendance-calculated-wage{display:grid;gap:3px;white-space:nowrap}
+.staff-attendance-calculated-wage strong{color:#34445b;font-size:9px}
+.staff-attendance-calculated-wage small{color:#77869b;font-size:7px}
+.staff-worker-month-earnings{margin:8px 0 12px;overflow:hidden;border:1px solid #e7edf6;border-radius:6px;background:#fff}
+.staff-worker-month-total{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;background:#f2f6ff}
+.staff-worker-month-total>span:first-child{display:grid;gap:4px}
+.staff-worker-month-total small{color:#71809a;font-size:7px;font-weight:700;letter-spacing:.45px}
+.staff-worker-month-total strong{color:#1e4f9c;font:700 16px Manrope,sans-serif}
+.staff-worker-month-total>span:last-child{color:#63738c;font-size:8px;text-align:right}
+.staff-worker-month-note{margin:0;padding:8px 12px;border-top:1px solid #e7edf6;color:#6e7d92;font-size:8px;line-height:1.5}
+.staff-worker-earnings-scroll{overflow:auto}
+.staff-worker-earnings{width:100%;border-collapse:collapse;text-align:left}
+.staff-worker-earnings th{padding:7px 10px;background:#f8faff;color:#78859a;font-size:7px;letter-spacing:.35px}
+.staff-worker-earnings td{padding:7px 10px;border-top:1px solid #eef1f5;color:#526177;font-size:8px}
+.staff-worker-earnings td:last-child{color:#27704e;font-weight:700;white-space:nowrap}
+.staff-worker-earnings-empty{text-align:center;color:#8793a5!important;font-weight:400!important}
+.staff-roster-worker-link{cursor:pointer}
+.staff-roster-worker-link:hover strong,.staff-roster-worker-link.is-selected strong{color:#245bc1;text-decoration:underline;text-underline-offset:2px}
+.staff-roster-worker-link:focus-visible{outline:2px solid #75a0ff;outline-offset:2px}
+.staff-attendance-panel{scroll-margin-top:12px}
+@media(max-width:560px){.staff-attendance-panel{padding:9px}.staff-attendance-panel .staff-section-heading{align-items:flex-start;flex-direction:column;gap:8px}.staff-attendance-selected-date{text-align:left}.staff-attendance-summary{align-items:flex-start;flex-direction:column;gap:4px}.staff-calendar{padding:5px;margin-block:6px 9px}.staff-calendar-weekdays,.staff-calendar-grid{gap:3px}.staff-calendar-day,.staff-calendar-blank{min-height:49px}.staff-calendar-day{gap:3px;padding:4px}.staff-calendar-day>span,.staff-calendar-day>small{font-size:6px}.staff-attendance-footer{align-items:flex-start;flex-direction:column}.staff-attendance-footer .catalog-button{width:100%;justify-content:center}}
+@media(max-width:560px){.staff-attendance-header-actions{width:100%;align-items:flex-start;justify-content:space-between;gap:8px}.staff-attendance-month-select input{max-width:100%}}

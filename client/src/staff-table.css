@@ -1,0 +1,62 @@
+.staff-ledger-panel .staff-table{
+  width:calc(100% - 22px);
+  min-width:850px;
+  margin:0 11px;
+  border-collapse:separate;
+  border-spacing:0 6px;
+}
+.staff-ledger-panel .staff-table thead th{
+  padding:7px 8px 2px;
+  border:0;
+  background:#fff;
+  color:#77849a;
+  font-size:8px;
+  font-weight:700;
+  letter-spacing:.45px;
+}
+.staff-ledger-panel .staff-table tbody td{
+  height:54px;
+  padding:7px 8px;
+  border-top:1px solid #e7ebf2;
+  border-bottom:1px solid #e7ebf2;
+  background:#f2f4f8;
+  vertical-align:middle;
+}
+.staff-ledger-panel .staff-table tbody td:first-child{
+  border-left:1px solid #e7ebf2;
+  border-radius:8px 0 0 8px;
+}
+.staff-ledger-panel .staff-table tbody td:last-child{
+  border-right:1px solid #e7ebf2;
+  border-radius:0 8px 8px 0;
+}
+.staff-ledger-panel .staff-table tbody tr:hover td{background:#edf1f7}
+.staff-ledger-panel .staff-table tbody td.catalog-state{
+  border:0;
+  border-radius:8px;
+  background:#f2f4f8;
+}
+.staff-ledger-value{
+  min-height:34px;
+  display:flex;
+  align-items:center;
+  padding:5px 8px;
+  border:1px solid #dfe5ef;
+  border-radius:8px;
+  background:#fff;
+  color:#29374d;
+  font-size:9px;
+  white-space:nowrap;
+}
+.staff-ledger-identity,.staff-ledger-money{align-items:flex-start;justify-content:center;flex-direction:column;gap:2px}
+.staff-ledger-identity strong,.staff-ledger-money strong{max-width:100%;overflow:hidden;color:#29374d;font-size:9px;text-overflow:ellipsis;white-space:nowrap}
+.staff-ledger-identity small,.staff-ledger-money small{max-width:100%;overflow:hidden;color:#8490a2;font-size:7px;text-overflow:ellipsis;white-space:nowrap}
+.staff-ledger-money{align-items:flex-end}
+.staff-ledger-money small{align-self:flex-end}
+.staff-ledger-money:not(:has(strong)){justify-content:center}
+.staff-ledger-due{color:#2865e9;font-weight:700}
+@media(max-width:560px){
+  .staff-ledger-panel .staff-table{width:850px;margin-inline:8px}
+  .staff-ledger-panel .staff-table thead th{padding-inline:7px}
+  .staff-ledger-panel .staff-table tbody td{padding-inline:7px}
+}

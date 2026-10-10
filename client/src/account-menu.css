@@ -1,0 +1,13 @@
+.catalog-account{position:relative}
+.catalog-account-trigger{display:flex;align-items:center;gap:7px;padding:2px 4px;border:0;border-radius:6px;background:transparent;color:inherit;text-align:left}
+.catalog-account-trigger:hover,.catalog-account-trigger[aria-expanded=true]{background:#f3f6fb}
+.catalog-account-trigger>svg{color:#66748a;transition:transform .15s ease}
+.catalog-account-trigger>svg.is-open{transform:rotate(180deg)}
+.catalog-account-menu{position:absolute;top:calc(100% + 8px);right:0;z-index:8;width:min(250px,calc(100vw - 24px));padding:6px;border:1px solid #e6ebf3;border-radius:9px;background:#fff;box-shadow:0 10px 28px #1a2c491f}
+.catalog-account-details{display:grid;gap:4px;padding:9px 10px 10px}
+.catalog-account-details strong{overflow:hidden;color:#1d2b43;font-size:10px;text-overflow:ellipsis;white-space:nowrap}
+.catalog-account-details span{overflow:hidden;color:#748197;font-size:9px;text-overflow:ellipsis;white-space:nowrap}
+.catalog-account-action{width:100%;height:31px;padding:0 10px;display:flex;align-items:center;gap:8px;border:0;border-top:1px solid #edf0f5;background:#fff;color:#b93838;text-align:left;font-size:9px}
+.catalog-account-action:hover{border-radius:5px;background:#fff3f2}
+.catalog-account-trigger:focus-visible,.catalog-account-action:focus-visible{outline:2px solid #75a0ff;outline-offset:2px}
+.currency-rate-warning{position:sticky;top:0;z-index:3;padding:7px 16px;border-bottom:1px solid #f0d18a;background:#fff8e8;color:#825d14;font-size:9px}
