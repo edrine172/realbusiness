@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ArrowDownLeft, ArrowUpRight, BriefcaseBusiness, Building2, Check, CreditCard, Download, FileText, Mail, MapPin, Phone, Plus, RefreshCw, Search, ShoppingCart, UserRound, Users, Wallet, X } from 'lucide-react';
-import { api, formatCurrency as currency, type Customer, type CustomerDashboardData } from './api';
+import { api, formatCurrency as currency, type Customer, type CustomerDashboardData, type Sale } from './api';
+import './customer-payments.css';
 
 type CustomerTab = 'orders' | 'ledger' | 'account';
 type CustomerDraft = Omit<Customer, 'id' | 'customer_code' | 'tax_exempt' | 'outstanding_balance' | 'lifetime_revenue' | 'completed_orders' | 'created_at'>;
@@ -65,12 +66,15 @@ function CustomerForm({ customer, onClose, onSaved }: {
   </form></div>;
 }
 
-function CustomerPaymentForm({ customer, onClose, onSaved }: {
+function CustomerPaymentForm({ customer, data, sale, onClose, onSaved }: {
   customer: Customer;
+  data: CustomerDashboardData;
+  sale: Sale | null;
   onClose: () => void;
   onSaved: () => Promise<void>;
 }) {
-  const [amount, setAmount] = useState('');
+  const remainingBalance = sale?.remaining_balance ?? customer.outstanding_balance;
+  const [amount, setAmount] = useState(remainingBalance);
   const [reference, setReference] = useState('');
   const [note, setNote] = useState('Account payment received');
   const [error, setError] = useState('');
@@ -78,10 +82,21 @@ function CustomerPaymentForm({ customer, onClose, onSaved }: {
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const paymentAmount = Number(amount);
+    const remaining = Number(remainingBalance);
+    if (!Number.isFinite(paymentAmount) || paymentAmount <= 0 || paymentAmount > remaining) {
+      setError(`Enter an amount greater than zero and no more than ${currency(remainingBalance)}.`);
+      return;
+    }
     setSaving(true);
     setError('');
     try {
-      await api.receiveCustomerPayment(customer.id, { amount, reference: reference.trim(), note: note.trim() });
+      await api.receiveCustomerPayment(customer.id, {
+        amount: paymentAmount.toFixed(2),
+        reference: reference.trim(),
+        note: note.trim(),
+        ...(sale ? { sale: sale.id } : {}),
+      });
       await onSaved();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not record this payment.');
@@ -91,10 +106,20 @@ function CustomerPaymentForm({ customer, onClose, onSaved }: {
   }
 
   return <div className="catalog-overlay" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><form className="catalog-modal customer-payment-modal" onSubmit={submit}>
-    <div className="catalog-modal-heading"><div><span className="catalog-eyebrow">ACCOUNT LEDGER</span><h2>Record payment</h2><p>Balance due: {currency(customer.outstanding_balance)}</p></div><button className="catalog-icon-button" type="button" onClick={onClose} aria-label="Close"><X size={18}/></button></div>
-    <label className="catalog-field">Payment amount<input type="number" min="0.01" max={customer.outstanding_balance} step="0.01" required value={amount} onChange={(event) => setAmount(event.target.value)}/></label>
+    <div className="catalog-modal-heading"><div><span className="catalog-eyebrow">ACCOUNT LEDGER</span><h2>Confirm customer payment</h2><p>{sale ? `Record payment received for invoice ${sale.receipt_number}.` : 'Record the amount received against this customer’s account balance.'}</p></div><button className="catalog-icon-button" type="button" onClick={onClose} aria-label="Close"><X size={18}/></button></div>
+    <div className="customer-payment-summary">
+      <div><span>{sale ? 'INVOICE TOTAL' : 'ACCOUNT CHARGES'}</span><strong>{currency(sale?.total ?? data.account_charges)}</strong></div>
+      <div><span>{sale ? 'INVOICE PAID' : 'ACCOUNT PAID'}</span><strong>{currency(sale?.paid_amount ?? data.account_payments)}</strong></div>
+      <div><span>{sale ? 'INVOICE BALANCE' : 'ACCOUNT REMAINING'}</span><strong>{currency(remainingBalance)}</strong></div>
+    </div>
+    <div className="customer-payment-presets">
+      <button type="button" className="catalog-button catalog-button-light" onClick={() => setAmount((Number(remainingBalance) / 2).toFixed(2))}>Half of remaining</button>
+      <button type="button" className="catalog-button catalog-button-light" onClick={() => setAmount(remainingBalance)}>Pay in full</button>
+    </div>
+    <label className="catalog-field">Amount received<input type="number" min="0.01" max={remainingBalance} step="0.01" required value={amount} onChange={(event) => setAmount(event.target.value)}/></label>
     <label className="catalog-field">Reference<input maxLength={80} value={reference} onChange={(event) => setReference(event.target.value)} placeholder="Bank transfer or remittance ID"/></label>
     <label className="catalog-field">Note<input maxLength={240} value={note} onChange={(event) => setNote(event.target.value)}/></label>
+    <p className="customer-payment-confirmation">Confirming records this payment, updates the remaining balance, and adds it to the customer ledger.</p>
     {error && <p className="catalog-form-error">{error}</p>}
     <div className="catalog-modal-actions"><button type="button" className="catalog-button catalog-button-light" onClick={onClose}>Cancel</button><button className="catalog-button catalog-button-primary" disabled={saving}>{saving ? 'Recording…' : 'Record payment'}</button></div>
   </form></div>;
@@ -114,6 +139,7 @@ export default function CustomersDashboard({ onStartSale, onOpenSales }: {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Customer | null>(null);
   const [showPayment, setShowPayment] = useState(false);
+  const [paymentSale, setPaymentSale] = useState<Sale | null>(null);
   const [notice, setNotice] = useState('');
 
   async function loadCustomers() {
@@ -188,7 +214,7 @@ export default function CustomersDashboard({ onStartSale, onOpenSales }: {
       {detail && activeCustomer && <>
         <div className="customer-breadcrumb"><button onClick={() => { setSelectedId(null); setDetail(null); setError(''); }}><Users size={12}/>Customers</button><span>›</span><strong>{activeCustomer.name}</strong><code>{activeCustomer.customer_code}</code></div>
         <section className="customer-profile-hero"><div className="customer-company-mark"><Building2 size={20}/></div><div className="customer-profile-copy"><h1>{activeCustomer.name}</h1><div className="customer-profile-meta"><span className="customer-account-status active"><i/>Active</span><span>{tierLabel(activeCustomer.tier)} account</span></div><p><BriefcaseBusiness size={12}/>{activeCustomer.sector || 'Industry not specified'}<span>·</span><span>ID: {activeCustomer.customer_code}</span></p></div><div className="customer-profile-actions"><button className="catalog-button catalog-button-primary" onClick={() => onStartSale(activeCustomer.id)}><ShoppingCart size={14}/>New sale</button>{Number(activeCustomer.outstanding_balance) > 0 && <button className="catalog-button catalog-button-light" onClick={() => setShowPayment(true)}><CreditCard size={14}/>Record payment</button>}<button className="catalog-button catalog-button-light" onClick={() => setEditing(activeCustomer)}>Edit profile</button><button className="catalog-icon-button" onClick={onOpenSales} aria-label="Open sales reports"><Download size={15}/></button></div></section>
-        <section className="overview-metrics customer-detail-metrics"><article><span>LIFETIME REVENUE</span><strong>{currency(detail.lifetime_revenue)}</strong><small><TrendingUpIcon/>Total recorded sales</small></article><article className="overview-alert-metric"><span>OUTSTANDING BALANCE</span><strong>{currency(detail.outstanding_balance)}</strong><small><Wallet size={13}/>Credit limit {currency(activeCustomer.credit_limit)}</small></article><article><span>COMPLETED ORDERS</span><strong>{detail.completed_orders.toLocaleString()}</strong><small><ShoppingCart size={13}/>Average order {currency(detail.completed_orders ? Number(detail.lifetime_revenue) / detail.completed_orders : 0)}</small></article><article><span>PAYMENT TERMS</span><strong className="customer-payment-terms">{activeCustomer.payment_terms}</strong><small><Check size={13}/>Account {activeCustomer.is_active ? 'in good standing' : 'inactive'}</small></article></section>
+        <section className="overview-metrics customer-detail-metrics"><article><span>LIFETIME REVENUE</span><strong>{currency(detail.lifetime_revenue)}</strong><small><TrendingUpIcon/>Total recorded sales</small></article><article className="overview-alert-metric"><span>OUTSTANDING BALANCE</span><strong>{currency(detail.outstanding_balance)}</strong><small><Wallet size={13}/>Credit limit {currency(activeCustomer.credit_limit)}</small></article><article><span>ACCOUNT PAYMENTS</span><strong>{currency(detail.account_payments)}</strong><small><CreditCard size={13}/>{Number(detail.outstanding_balance) === 0 ? 'Paid in full' : Number(detail.account_payments) > 0 ? 'Partially paid' : 'Unpaid'}</small></article><article><span>COMPLETED ORDERS</span><strong>{detail.completed_orders.toLocaleString()}</strong><small><ShoppingCart size={13}/>Average order {currency(detail.completed_orders ? Number(detail.lifetime_revenue) / detail.completed_orders : 0)}</small></article></section>
         <div className="customer-detail-layout">
           <aside className="customer-info-column">
             <section className="overview-panel customer-info-panel"><div className="customer-panel-heading"><h2><UserRound size={14}/>Customer information</h2><button onClick={() => setEditing(activeCustomer)}>Edit</button></div><div className="customer-info-manager"><span className="customer-manager-avatar">{activeCustomer.account_manager ? activeCustomer.account_manager.slice(0, 1) : '—'}</span><span><small>ACCOUNT MANAGER</small><strong>{activeCustomer.account_manager || 'Unassigned'}</strong></span></div><div className="customer-info-list"><div><span><UserRound size={12}/>Contact</span><strong>{activeCustomer.contact_name || '—'}</strong></div><div><span><Mail size={12}/>Work email</span><strong>{activeCustomer.email || '—'}</strong></div><div><span><Phone size={12}/>Direct phone</span><strong>{activeCustomer.phone || '—'}</strong></div><div><span><MapPin size={12}/>Billing address</span><strong>{activeCustomer.billing_address || 'Not provided'}</strong></div><div><span><MapPin size={12}/>Shipping address</span><strong>{activeCustomer.shipping_address || 'Same as billing'}</strong></div></div><div className="customer-tax-details"><div><small>TAX ID</small><strong>{activeCustomer.tax_number || 'Not provided'}</strong></div><div><small>TERMS</small><strong>{activeCustomer.payment_terms}</strong></div></div></section>
@@ -196,7 +222,7 @@ export default function CustomersDashboard({ onStartSale, onOpenSales }: {
           </aside>
           <div className="customer-detail-main">
             <section className="overview-panel customer-records-panel"><div className="customer-record-tabs" role="tablist" aria-label="Customer records"><button className={tab === 'orders' ? 'active' : ''} onClick={() => setTab('orders')}><FileText size={13}/>Order history &amp; invoices <span>{detail.sales.length}</span></button><button className={tab === 'ledger' ? 'active' : ''} onClick={() => setTab('ledger')}><Wallet size={13}/>Ledger &amp; statements <span>{detail.ledger_entries.length}</span></button><button className={tab === 'account' ? 'active' : ''} onClick={() => setTab('account')}><BriefcaseBusiness size={13}/>Account profile</button></div>
-              {tab === 'orders' && <div className="customer-record-table-wrap"><table className="catalog-table customer-record-table"><thead><tr><th>INVOICE #</th><th>ORDER DATE</th><th>ITEMS SUMMARY</th><th>PAYMENT</th><th>AMOUNT</th></tr></thead><tbody>{detail.sales.map((sale) => <tr key={sale.id}><td><strong className="customer-invoice-ref">{sale.receipt_number}</strong><small>{sale.customer_name}</small></td><td>{dateLabel(sale.created_at)}</td><td>{sale.items.reduce((sum, item) => sum + item.quantity, 0)}× {sale.items.slice(0, 2).map((item) => item.product_name).join(', ')}{sale.items.length > 2 ? ` +${sale.items.length - 2} more` : ''}</td><td><span className={`customer-payment-badge ${sale.payment_method}`}>{sale.payment_method_display}</span></td><td><strong>{currency(sale.total)}</strong></td></tr>)}{!detail.sales.length && <tr><td colSpan={5} className="catalog-state">No sales recorded for this account yet.</td></tr>}</tbody></table></div>}
+              {tab === 'orders' && <div className="customer-record-table-wrap"><table className="catalog-table customer-record-table customer-order-payment-table"><thead><tr><th>INVOICE #</th><th>ORDER DATE</th><th>ITEMS SOLD</th><th>PAYMENT METHOD</th><th>ORDER TOTAL</th><th>AMOUNT PAID</th><th>REMAINING</th><th>PAYMENT ACTION</th></tr></thead><tbody>{detail.sales.map((sale) => <tr key={sale.id}><td><strong className="customer-invoice-ref">{sale.receipt_number}</strong><small>{sale.customer_name}</small></td><td>{dateLabel(sale.created_at)}</td><td><div className="customer-sold-items">{sale.items.map((item) => <div key={item.id}><strong>{item.product_name}</strong><small>{item.product_sku} · {item.quantity} × {currency(item.unit_price)} = {currency(item.line_total)}</small></div>)}</div></td><td><span className={`customer-payment-badge ${sale.payment_method}`}>{sale.payment_method_display}</span><small className={`customer-sale-payment-status ${sale.payment_status}`}>{sale.payment_status}</small></td><td><strong>{currency(sale.total)}</strong></td><td><strong>{currency(sale.paid_amount)}</strong></td><td className={Number(sale.remaining_balance) > 0 ? 'customer-balance-due' : ''}><strong>{currency(sale.remaining_balance)}</strong></td><td>{sale.payment_method === 'account' && Number(sale.remaining_balance) > 0 ? <button className="catalog-button catalog-button-light customer-sale-pay-button" onClick={() => { setPaymentSale(sale); setShowPayment(true); }}>Confirm payment</button> : <span className="catalog-muted">{sale.payment_status === 'paid' ? 'Paid in full' : '—'}</span>}</td></tr>)}{!detail.sales.length && <tr><td colSpan={8} className="catalog-state">No sales recorded for this account yet.</td></tr>}</tbody></table></div>}
               {tab === 'ledger' && <div className="customer-record-table-wrap"><table className="catalog-table customer-record-table"><thead><tr><th>ACTIVITY</th><th>DATE</th><th>REFERENCE</th><th>NOTE</th><th>AMOUNT</th></tr></thead><tbody>{detail.ledger_entries.map((entry) => <tr key={entry.id}><td><span className={`customer-ledger-icon ${entry.entry_type}`} >{entry.entry_type === 'payment' ? <ArrowDownLeft size={13}/> : <ArrowUpRight size={13}/>}</span>{entry.entry_type_display}</td><td>{dateLabel(entry.created_at)}</td><td>{entry.reference || entry.sale_reference || '—'}</td><td>{entry.note || '—'}</td><td className={entry.entry_type === 'payment' || entry.entry_type === 'credit' ? 'customer-credit-amount' : ''}>{entry.entry_type === 'payment' || entry.entry_type === 'credit' ? '−' : '+'}{currency(entry.amount)}</td></tr>)}{!detail.ledger_entries.length && <tr><td colSpan={5} className="catalog-state">No account ledger activity yet.</td></tr>}</tbody></table></div>}
               {tab === 'account' && <div className="customer-account-fields"><div><span>Account tier</span><strong>{tierLabel(activeCustomer.tier)}</strong></div><div><span>Industry</span><strong>{activeCustomer.sector || '—'}</strong></div><div><span>Payment terms</span><strong>{activeCustomer.payment_terms}</strong></div><div><span>Approved credit limit</span><strong>{currency(activeCustomer.credit_limit)}</strong></div><div><span>Tax treatment</span><strong>{activeCustomer.tax_number ? `Tax ID ${activeCustomer.tax_number}` : 'Standard'}</strong></div><div><span>Account created</span><strong>{dateLabel(activeCustomer.created_at)}</strong></div></div>}
             </section>
@@ -207,7 +233,7 @@ export default function CustomersDashboard({ onStartSale, onOpenSales }: {
     </>}
     {notice && <div className="catalog-toast"><Check size={15}/>{notice}<button onClick={() => setNotice('')} aria-label="Dismiss"><X size={14}/></button></div>}
     {(showForm || editing) && <CustomerForm customer={editing} onClose={() => { setShowForm(false); setEditing(null); }} onSaved={saveCustomer}/>}
-    {showPayment && activeCustomer && <CustomerPaymentForm customer={activeCustomer} onClose={() => setShowPayment(false)} onSaved={recordPayment}/>}
+    {showPayment && activeCustomer && detail && <CustomerPaymentForm customer={activeCustomer} data={detail} sale={paymentSale} onClose={() => { setShowPayment(false); setPaymentSale(null); }} onSaved={async () => { setShowPayment(false); setPaymentSale(null); await recordPayment(); }}/>}
   </>;
 }
 

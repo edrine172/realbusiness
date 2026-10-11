@@ -199,11 +199,13 @@ def build_report_summary(days, period_start=None, period_end=None):
             label = str(date.year)
         daily_revenue = current['revenue_by_date'].get(date, Decimal('0'))
         daily_cost = current['cost_by_date'].get(date, Decimal('0'))
-        bucket = daily_series.setdefault(key, {'label': label, 'revenue': 0, 'gross_profit': 0, 'purchases': 0, 'expenses': 0})
+        bucket = daily_series.setdefault(key, {'label': label, 'revenue': 0, 'cost_of_goods': 0, 'gross_profit': 0, 'purchases': 0, 'expenses': 0, 'net_profit': 0})
         bucket['revenue'] += float(daily_revenue)
+        bucket['cost_of_goods'] += float(daily_cost)
         bucket['gross_profit'] += float(daily_revenue - daily_cost)
         bucket['purchases'] += float(purchase_by_date.get(date, Decimal('0')))
         bucket['expenses'] += float(expense_by_date.get(date, Decimal('0')))
+        bucket['net_profit'] += float(daily_revenue - daily_cost - expense_by_date.get(date, Decimal('0')))
 
     open_purchases = Purchase.objects.filter(status=Purchase.Status.ORDERED).prefetch_related('items')
     open_purchase_value = sum(

@@ -13,9 +13,9 @@ from django.utils import timezone
 from rest_framework.filters import OrderingFilter, SearchFilter
 from rest_framework import viewsets
 from rest_framework.decorators import action, api_view, permission_classes
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from .models import Category, Customer, CustomerLedgerEntry, Expense, ExpenseBudget, Notification, PayrollLine, PayrollRun, Product, Purchase, PurchaseItem, Sale, SaleItem, SecurityAuditEvent, StaffAttendance, StaffMember, StockMovement, Supplier, SupplierLedgerEntry, SystemSetting
 from .serializers import CategorySerializer, CustomerLedgerEntrySerializer, CustomerPaymentSerializer, CustomerSerializer, ExpenseBudgetSerializer, ExpenseSerializer, NotificationSerializer, PayrollRunSerializer, ProductSerializer, PurchaseSerializer, SaleCheckoutSerializer, SaleSerializer, StaffAttendanceInputSerializer, StaffAttendanceSerializer, StaffMemberSerializer, StockAdjustmentSerializer, StockMovementSerializer, SupplierLedgerEntrySerializer, SupplierPaymentSerializer, SupplierSerializer
 from .reports import build_report_summary
@@ -220,17 +220,54 @@ class CustomerViewSet(viewsets.ModelViewSet):
     ordering_fields = ['name', 'created_at', 'outstanding_balance']
     ordering = ['name']
 
+    def _sale_payment_allocations(self, customer, sales):
+        account_sales = [sale for sale in sales if sale.payment_method == Sale.PaymentMethod.ACCOUNT]
+        paid_by_sale = {
+            sale.id: sum(
+                (entry.amount for entry in sale.ledger_entries.all()
+                 if entry.entry_type == CustomerLedgerEntry.EntryType.PAYMENT),
+                Decimal('0'),
+            )
+            for sale in account_sales
+        }
+        unallocated_payments = customer.ledger_entries.filter(
+            entry_type=CustomerLedgerEntry.EntryType.PAYMENT,
+            sale__isnull=True,
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+
+        for sale in sorted(account_sales, key=lambda row: (row.created_at, row.id)):
+            remaining = max(sale.total - paid_by_sale[sale.id], Decimal('0'))
+            allocation = min(unallocated_payments, remaining)
+            paid_by_sale[sale.id] += allocation
+            unallocated_payments -= allocation
+            if unallocated_payments <= 0:
+                break
+        return paid_by_sale, unallocated_payments
+
     @action(detail=True, methods=['get'])
     def dashboard(self, request, pk=None):
         customer = self.get_object()
-        sales = customer.sales.prefetch_related('items').all()
-        lifetime_revenue = sales.aggregate(total=Sum('total'))['total'] or Decimal('0')
+        sales = list(customer.sales.prefetch_related('items', 'ledger_entries').all())
+        lifetime_revenue = sum((sale.total for sale in sales), Decimal('0'))
+        paid_by_sale, _ = self._sale_payment_allocations(customer, sales)
+        ledger_totals = customer.ledger_entries.values('entry_type').annotate(total=Sum('amount'))
+        account_totals = {
+            row['entry_type']: row['total'] or Decimal('0')
+            for row in ledger_totals
+        }
         return Response({
             'customer': CustomerSerializer(customer).data,
             'lifetime_revenue': str(lifetime_revenue.quantize(Decimal('0.01'))),
-            'completed_orders': sales.count(),
+            'completed_orders': len(sales),
             'outstanding_balance': str(customer.outstanding_balance),
-            'sales': SaleSerializer(sales[:50], many=True).data,
+            'account_charges': str(account_totals.get(CustomerLedgerEntry.EntryType.CHARGE, Decimal('0')).quantize(Decimal('0.01'))),
+            'account_payments': str(account_totals.get(CustomerLedgerEntry.EntryType.PAYMENT, Decimal('0')).quantize(Decimal('0.01'))),
+            'account_credits': str(account_totals.get(CustomerLedgerEntry.EntryType.CREDIT, Decimal('0')).quantize(Decimal('0.01'))),
+            'sales': SaleSerializer(
+                sales[:50],
+                many=True,
+                context={'sale_paid_amounts': paid_by_sale},
+            ).data,
             'ledger_entries': CustomerLedgerEntrySerializer(
                 customer.ledger_entries.select_related('sale')[:20],
                 many=True,
@@ -249,16 +286,65 @@ class CustomerViewSet(viewsets.ModelViewSet):
         customer.outstanding_balance -= data['amount']
         customer.save(update_fields=['outstanding_balance'])
         from uuid import uuid4
-        entry = CustomerLedgerEntry.objects.create(
-            customer=customer,
-            entry_type=CustomerLedgerEntry.EntryType.PAYMENT,
-            amount=data['amount'],
-            reference=data.get('reference', '').strip() or f"PAY-{uuid4().hex[:8].upper()}",
-            note=data.get('note', '').strip() or 'Payment received',
+        reference = data.get('reference', '').strip() or f"PAY-{uuid4().hex[:8].upper()}"
+        note = data.get('note', '').strip() or 'Payment received'
+        sales = list(
+            Sale.objects.select_for_update()
+            .filter(customer=customer, payment_method=Sale.PaymentMethod.ACCOUNT)
+            .prefetch_related('ledger_entries')
+            .order_by('created_at', 'id')
         )
+        paid_by_sale, _ = self._sale_payment_allocations(customer, sales)
+        payment_remaining = data['amount']
+        new_entries = []
+        target_sale = data.get('sale')
+        if target_sale is not None:
+            target_sale = next((sale for sale in sales if sale.pk == target_sale.pk), None)
+            if target_sale is None:
+                raise ValidationError({'sale': 'Select an on-account sale belonging to this customer.'})
+            sale_balance = max(target_sale.total - paid_by_sale.get(target_sale.id, Decimal('0')), Decimal('0'))
+            if payment_remaining > sale_balance:
+                raise ValidationError({'amount': f'Payment cannot exceed this sale balance of {sale_balance:.2f}.'})
+            new_entries.append(CustomerLedgerEntry.objects.create(
+                customer=customer,
+                sale=target_sale,
+                entry_type=CustomerLedgerEntry.EntryType.PAYMENT,
+                amount=payment_remaining,
+                reference=reference,
+                note=note,
+            ))
+            payment_remaining = Decimal('0')
+
+        for sale in sales:
+            if target_sale is not None:
+                break
+            sale_balance = max(sale.total - paid_by_sale.get(sale.id, Decimal('0')), Decimal('0'))
+            amount_for_sale = min(payment_remaining, sale_balance)
+            if amount_for_sale <= 0:
+                continue
+            new_entries.append(CustomerLedgerEntry.objects.create(
+                customer=customer,
+                sale=sale,
+                entry_type=CustomerLedgerEntry.EntryType.PAYMENT,
+                amount=amount_for_sale,
+                reference=reference,
+                note=note,
+            ))
+            payment_remaining -= amount_for_sale
+            if payment_remaining <= 0:
+                break
+        if payment_remaining > 0 or not new_entries:
+            new_entries.append(CustomerLedgerEntry.objects.create(
+                customer=customer,
+                entry_type=CustomerLedgerEntry.EntryType.PAYMENT,
+                amount=payment_remaining if payment_remaining > 0 else data['amount'],
+                reference=reference,
+                note=note,
+            ))
         return Response({
             'customer': CustomerSerializer(customer).data,
-            'ledger_entry': CustomerLedgerEntrySerializer(entry).data,
+            'ledger_entry': CustomerLedgerEntrySerializer(new_entries[0]).data,
+            'ledger_entries': CustomerLedgerEntrySerializer(new_entries, many=True).data,
         }, status=201)
 
 
@@ -711,6 +797,17 @@ class StockMovementViewSet(viewsets.ModelViewSet):
         queryset = super().get_queryset()
         days = self.request.query_params.get('days')
         month = self.request.query_params.get('month')
+        selected_date = self.request.query_params.get('date')
+        if selected_date is not None:
+            if days is not None or month is not None:
+                raise ValidationError({'date': 'Use a single day, a rolling range, or a calendar month.'})
+            try:
+                parsed_date = datetime.strptime(selected_date, '%Y-%m-%d').date()
+            except (TypeError, ValueError):
+                raise ValidationError({'date': 'Enter a date in YYYY-MM-DD format.'})
+            if parsed_date.isoformat() != selected_date:
+                raise ValidationError({'date': 'Enter a date in YYYY-MM-DD format.'})
+            return queryset.filter(created_at__date=parsed_date)
         if month is not None:
             if days is not None:
                 raise ValidationError({'month': 'Use either a rolling range or a calendar month.'})
@@ -747,7 +844,7 @@ class StockMovementViewSet(viewsets.ModelViewSet):
 
 
 class PurchaseViewSet(viewsets.ModelViewSet):
-    queryset = Purchase.objects.select_related('supplier').prefetch_related('items__product').all()
+    queryset = Purchase.objects.select_related('supplier').prefetch_related('items__product', 'ledger_entries').all()
     serializer_class = PurchaseSerializer
     http_method_names = ['get', 'post', 'head', 'options']
 
@@ -788,6 +885,49 @@ class PurchaseViewSet(viewsets.ModelViewSet):
             note='Goods received; payable recorded',
         )
         return Response(self.get_serializer(purchase).data)
+
+    @action(detail=True, methods=['post'])
+    @transaction.atomic
+    def payments(self, request, pk=None):
+        serializer = SupplierPaymentSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        purchase = self.get_object()
+        purchase = Purchase.objects.select_for_update().select_related('supplier').get(pk=purchase.pk)
+        if purchase.status != Purchase.Status.RECEIVED:
+            raise ValidationError({'status': 'A purchase must be received before a supplier payment can be recorded.'})
+
+        purchase_total = sum(
+            (item.quantity * item.unit_cost for item in purchase.items.all()),
+            Decimal('0'),
+        )
+        paid_amount = purchase.ledger_entries.filter(
+            entry_type=SupplierLedgerEntry.EntryType.PAYMENT,
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+        remaining_balance = max(purchase_total - paid_amount, Decimal('0'))
+        if data['amount'] > remaining_balance:
+            raise ValidationError({'amount': f'Payment cannot exceed this purchase balance of {remaining_balance:.2f}.'})
+
+        supplier = Supplier.objects.select_for_update().get(pk=purchase.supplier_id)
+        if data['amount'] > supplier.outstanding_balance:
+            raise ValidationError({
+                'amount': f'Payment cannot exceed the supplier account balance of {supplier.outstanding_balance:.2f}.',
+            })
+        supplier.outstanding_balance -= data['amount']
+        supplier.save(update_fields=['outstanding_balance'])
+        from uuid import uuid4
+        entry = SupplierLedgerEntry.objects.create(
+            supplier=supplier,
+            purchase=purchase,
+            entry_type=SupplierLedgerEntry.EntryType.PAYMENT,
+            amount=data['amount'],
+            reference=data.get('reference', '').strip() or f'PAY-{uuid4().hex[:8].upper()}',
+            note=data.get('note', '').strip() or f'Supplier payment confirmed for {purchase.reference}',
+        )
+        return Response({
+            'purchase': self.get_serializer(purchase).data,
+            'ledger_entry': SupplierLedgerEntrySerializer(entry).data,
+        }, status=201)
 
 
 class SaleViewSet(viewsets.ReadOnlyModelViewSet):
@@ -979,6 +1119,16 @@ def sales_summary(request):
 
 @api_view(['GET'])
 def reports_summary(request):
+    selected_date = request.query_params.get('date')
+    if selected_date is not None:
+        try:
+            report_date = datetime.strptime(selected_date, '%Y-%m-%d').date()
+        except (TypeError, ValueError):
+            raise ValidationError({'date': 'Enter a date in YYYY-MM-DD format.'})
+        if report_date.isoformat() != selected_date:
+            raise ValidationError({'date': 'Enter a date in YYYY-MM-DD format.'})
+        return Response(build_report_summary(1, report_date, report_date))
+
     month = request.query_params.get('month')
     if month is not None:
         try:

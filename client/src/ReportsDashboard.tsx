@@ -10,6 +10,10 @@ const currentMonth = () => {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 };
+const currentDate = () => {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+};
 const reportTabs: Array<{ value: ReportTab; label: string; icon: typeof ChartNoAxesCombined }> = [
   { value: 'sales', label: 'Sales reports', icon: ChartNoAxesCombined },
   { value: 'inventory', label: 'Inventory reports', icon: Package },
@@ -28,15 +32,17 @@ export default function ReportsDashboard({ onOpenInventory, onOpenPurchases, onO
   const [activeTab, setActiveTab] = useState<ReportTab>('sales');
   const [range, setRange] = useState<DateRange>('30d');
   const [monthMode, setMonthMode] = useState(false);
+  const [dayMode, setDayMode] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState(currentMonth);
+  const [selectedDate, setSelectedDate] = useState(currentDate);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  async function loadReport(selectedRange: DateRange = range, month?: string) {
+  async function loadReport(selectedRange: DateRange = range, month?: string, date?: string) {
     setLoading(true);
     setError('');
     try {
-      setReport(await api.reportsSummary(selectedRange, month));
+      setReport(await api.reportsSummary(selectedRange, month, date));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Reports could not be loaded.');
     } finally {
@@ -44,13 +50,13 @@ export default function ReportsDashboard({ onOpenInventory, onOpenPurchases, onO
     }
   }
 
-  useEffect(() => { void loadReport(range, monthMode ? selectedMonth : undefined); }, [range, monthMode, selectedMonth]);
+  useEffect(() => { void loadReport(range, monthMode ? selectedMonth : undefined, dayMode ? selectedDate : undefined); }, [range, monthMode, selectedMonth, dayMode, selectedDate]);
 
   const series = report?.daily_series ?? [];
   const chartSeries = (() => {
     if (!report) return [];
     if (report.series_interval !== 'day') return series;
-    const groups = new Map<string, { label: string; revenue: number; gross_profit: number; purchases: number; expenses: number }>();
+    const groups = new Map<string, { label: string; revenue: number; cost_of_goods: number; gross_profit: number; purchases: number; expenses: number; net_profit: number }>();
     series.forEach((day, index) => {
       const date = new Date(`${report.start_date}T00:00:00`);
       date.setDate(date.getDate() + index);
@@ -61,11 +67,13 @@ export default function ReportsDashboard({ onOpenInventory, onOpenPurchases, onO
       const existing = groups.get(key);
       if (existing) {
         existing.revenue += day.revenue;
+        existing.cost_of_goods += day.cost_of_goods;
         existing.gross_profit += day.gross_profit;
         existing.purchases += day.purchases;
         existing.expenses += day.expenses;
+        existing.net_profit += day.net_profit;
       } else {
-        groups.set(key, { label, revenue: day.revenue, gross_profit: day.gross_profit, purchases: day.purchases, expenses: day.expenses });
+        groups.set(key, { label, revenue: day.revenue, cost_of_goods: day.cost_of_goods, gross_profit: day.gross_profit, purchases: day.purchases, expenses: day.expenses, net_profit: day.net_profit });
       }
     });
     return [...groups.values()];
@@ -73,9 +81,9 @@ export default function ReportsDashboard({ onOpenInventory, onOpenPurchases, onO
   const labelIndexes = new Set([0, Math.floor((chartSeries.length - 1) / 2), chartSeries.length - 1]);
   const categories = activeTab === 'inventory' ? report?.inventory_categories ?? [] : activeTab === 'purchases' ? report?.purchase_categories ?? [] : report?.categories ?? [];
   const chartData = activeTab === 'inventory'
-    ? categories.map((category) => ({ label: category.name, primary: Number(category.revenue), secondary: 0, tertiary: 0, quaternary: 0 }))
-    : chartSeries.map((day) => ({ label: day.label, primary: activeTab === 'purchases' ? day.purchases : day.revenue, secondary: activeTab === 'financial' || activeTab === 'sales' ? day.gross_profit : 0, tertiary: activeTab === 'financial' ? day.purchases : 0, quaternary: activeTab === 'financial' ? day.expenses : 0 }));
-  const maxValue = Math.max(...chartData.flatMap((day) => [day.primary, day.secondary, day.tertiary, day.quaternary ?? 0]), 1);
+    ? categories.map((category) => ({ label: category.name, primary: Number(category.revenue), secondary: 0, tertiary: 0, quaternary: 0, netResult: 0 }))
+    : chartSeries.map((day) => ({ label: day.label, primary: activeTab === 'purchases' ? day.purchases : day.revenue, secondary: activeTab === 'financial' ? day.cost_of_goods : activeTab === 'sales' ? day.gross_profit : 0, tertiary: activeTab === 'financial' ? day.expenses : 0, quaternary: 0, netResult: activeTab === 'financial' ? day.net_profit : 0 }));
+  const maxValue = Math.max(...chartData.flatMap((day) => [day.primary, day.secondary, day.tertiary, day.quaternary, Math.abs(day.netResult)]), 1);
   const categoryTotal = categories.reduce((sum, category) => sum + category.percent, 0);
   let accumulatedPercent = 0;
   const donutGradient = categories.length ? `conic-gradient(${categories.map((category, index) => {
@@ -97,8 +105,8 @@ export default function ReportsDashboard({ onOpenInventory, onOpenPurchases, onO
   ] : [
     { label: 'NET REVENUE', value: currency(report.revenue), detail: `${report.revenue_change_percent >= 0 ? '+' : ''}${report.revenue_change_percent}% vs previous period`, icon: ChartNoAxesCombined, tone: 'blue' },
     { label: 'COST OF GOODS', value: currency(report.cost_of_goods), detail: 'Cost snapshots at checkout', icon: ShoppingCart, tone: 'slate' },
-    { label: 'GROSS PROFIT', value: currency(report.gross_profit), detail: `${report.gross_margin}% gross margin`, icon: TrendingUp, tone: 'green' },
-    { label: activeTab === 'financial' ? 'NET PROFIT' : 'INVENTORY TURNOVER', value: activeTab === 'financial' ? currency(report.net_profit) : `${report.inventory_turnover}×`, detail: activeTab === 'financial' ? `${currency(report.operating_expenses)} operating expenses` : 'Annualized at cost', icon: activeTab === 'financial' ? BriefcaseBusiness : RefreshCw, tone: 'mint' },
+    { label: Number(report.gross_profit) < 0 ? 'GROSS LOSS' : 'GROSS PROFIT', value: currency(report.gross_profit), detail: `${report.gross_margin}% gross margin`, icon: TrendingUp, tone: Number(report.gross_profit) < 0 ? 'loss' : 'green' },
+    { label: activeTab === 'financial' ? Number(report.net_profit) < 0 ? 'NET LOSS' : 'NET PROFIT' : 'INVENTORY TURNOVER', value: activeTab === 'financial' ? currency(report.net_profit) : `${report.inventory_turnover}×`, detail: activeTab === 'financial' ? `${currency(report.operating_expenses)} operating expenses` : 'Annualized at cost', icon: activeTab === 'financial' ? BriefcaseBusiness : RefreshCw, tone: activeTab === 'financial' && Number(report.net_profit) < 0 ? 'loss' : 'mint' },
   ] : [];
 
   function exportReport() {
@@ -107,12 +115,14 @@ export default function ReportsDashboard({ onOpenInventory, onOpenPurchases, onO
       ? [['Category', 'Units on hand', 'Inventory value', 'Mix %'], ...report.inventory_categories.map((category) => [category.name, category.units, category.revenue, `${category.percent}%`])]
       : activeTab === 'purchases'
         ? [['Category', 'Units received', 'Purchase spend', 'Mix %'], ...report.purchase_categories.map((category) => [category.name, category.units, category.revenue, `${category.percent}%`])]
-        : [['Product', 'SKU', 'Category', 'Units sold', 'Revenue', 'Cost', 'Gross profit', 'Gross margin', 'Average price'], ...report.top_products.map((product) => [product.product_name, product.product_sku, product.category_name, product.units_sold, product.revenue, product.cost, product.gross_profit, `${product.gross_margin}%`, product.average_price])];
+        : activeTab === 'financial'
+          ? [['Profit & loss metric', 'Amount'], ['Sales revenue', report.revenue], ['Less: cost of goods sold', report.cost_of_goods], ['Gross profit/loss', report.gross_profit], ['Less: operating expenses', report.operating_expenses], [Number(report.net_profit) < 0 ? 'Net loss' : 'Net profit', report.net_profit]]
+          : [['Product', 'SKU', 'Category', 'Units sold', 'Revenue', 'Cost', 'Gross profit', 'Gross margin', 'Average price'], ...report.top_products.map((product) => [product.product_name, product.product_sku, product.category_name, product.units_sold, product.revenue, product.cost, product.gross_profit, `${product.gross_margin}%`, product.average_price])];
     const csv = rows.map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(',')).join('\r\n');
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
     const link = document.createElement('a');
     link.href = url;
-    link.download = `stockpulse-report-${monthMode ? selectedMonth : range}.csv`;
+    link.download = `stockpulse-report-${dayMode ? selectedDate : monthMode ? selectedMonth : range}.csv`;
     link.click();
     URL.revokeObjectURL(url);
   }
@@ -125,12 +135,14 @@ export default function ReportsDashboard({ onOpenInventory, onOpenPurchases, onO
       ? ['Category', 'Units on hand', 'Inventory value', 'Mix %']
       : activeTab === 'purchases'
         ? ['Category', 'Units received', 'Purchase spend', 'Mix %']
-        : ['Product', 'SKU', 'Category', 'Units sold', 'Revenue', 'Cost', 'Gross profit', 'Gross margin', 'Average price'];
+        : activeTab === 'financial' ? ['Profit & loss metric', 'Amount'] : ['Product', 'SKU', 'Category', 'Units sold', 'Revenue', 'Cost', 'Gross profit', 'Gross margin', 'Average price'];
     const body = activeTab === 'inventory'
       ? report.inventory_categories.map((category) => [category.name, category.units.toLocaleString(), currency(category.revenue), `${category.percent}%`])
       : activeTab === 'purchases'
         ? report.purchase_categories.map((category) => [category.name, category.units.toLocaleString(), currency(category.revenue), `${category.percent}%`])
-        : report.top_products.map((product) => [product.product_name, product.product_sku, product.category_name, product.units_sold.toLocaleString(), currency(product.revenue), currency(product.cost), currency(product.gross_profit), `${product.gross_margin}%`, currency(product.average_price)]);
+        : activeTab === 'financial'
+          ? [['Sales revenue', report.revenue], ['Less: cost of goods sold', report.cost_of_goods], ['Gross profit/loss', report.gross_profit], ['Less: operating expenses', report.operating_expenses], [Number(report.net_profit) < 0 ? 'Net loss' : 'Net profit', report.net_profit]].map(([label, amount]) => [label, currency(amount)])
+          : report.top_products.map((product) => [product.product_name, product.product_sku, product.category_name, product.units_sold.toLocaleString(), currency(product.revenue), currency(product.cost), currency(product.gross_profit), `${product.gross_margin}%`, currency(product.average_price)]);
     const document = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
     document.setFontSize(17);
     document.text(`StockPulse · ${title}`, 36, 40);
@@ -144,27 +156,39 @@ export default function ReportsDashboard({ onOpenInventory, onOpenPurchases, onO
       headStyles: { fillColor: [40, 101, 233] },
       margin: { left: 36, right: 36 },
     });
-    document.save(`stockpulse-${activeTab}-report-${monthMode ? selectedMonth : range}.pdf`);
+    document.save(`stockpulse-${activeTab}-report-${dayMode ? selectedDate : monthMode ? selectedMonth : range}.pdf`);
   }
 
   return <>
-    <section className="catalog-heading reports-heading"><div><div className="catalog-breadcrumb">Analytics <span>›</span> <b>Business reports</b></div><h1>Analytics &amp; Business Reports</h1><p>Track revenue, margin, stock value, and supplier spend across your operation.</p></div><div className="reports-heading-actions"><span className="reports-live"><i/>Live</span><div className="overview-flow-controls"><label className="catalog-select reports-range"><select aria-label="Report history range" value={monthMode ? 'month' : range} onChange={(event) => { if (event.target.value === 'month') setMonthMode(true); else { setMonthMode(false); setRange(event.target.value as DateRange); } }}><optgroup label="Rolling history"><option value="1d">Last day</option><option value="7d">Last week</option><option value="30d">Last month</option><option value="90d">Last 3 months</option><option value="180d">Last 6 months</option><option value="365d">Last year</option><option value="730d">Last 2 years</option><option value="1825d">Last 5 years</option><option value="3650d">Last 10 years</option><option value="18250d">Last 50 years</option><option value="36500d">Last 100 years</option><option value="73000d">Last 200 years</option></optgroup><option value="month">Choose month &amp; year</option></select></label>{monthMode && <input className="overview-flow-month-picker" type="month" aria-label="Select report month and year" value={selectedMonth} onChange={(event) => setSelectedMonth(event.target.value)}/>}</div><FileActionMenu label="Export" direction="export" options={[{ label: 'CSV report', onSelect: exportReport, disabled: !report }, { label: 'PDF report', onSelect: () => void exportReportPdf().catch((cause: unknown) => setError(cause instanceof Error ? cause.message : 'PDF export failed.')), disabled: !report }]}/></div></section>
+    <section className="catalog-heading reports-heading"><div><div className="catalog-breadcrumb">Analytics <span>›</span> <b>Business reports</b></div><h1>Analytics &amp; Business Reports</h1><p>Track revenue, margin, stock value, and supplier spend across your operation.</p></div><div className="reports-heading-actions"><span className="reports-live"><i/>Live</span><div className="overview-flow-controls"><label className="catalog-select reports-range"><select aria-label="Report history range" value={dayMode ? 'day' : monthMode ? 'month' : range} onChange={(event) => { if (event.target.value === 'day') { setDayMode(true); setMonthMode(false); } else if (event.target.value === 'month') { setMonthMode(true); setDayMode(false); } else { setMonthMode(false); setDayMode(false); setRange(event.target.value as DateRange); } }}><optgroup label="Rolling history"><option value="1d">Last day</option><option value="7d">Last week</option><option value="30d">Last month</option><option value="90d">Last 3 months</option><option value="180d">Last 6 months</option><option value="365d">Last year</option><option value="730d">Last 2 years</option><option value="1825d">Last 5 years</option><option value="3650d">Last 10 years</option><option value="18250d">Last 50 years</option><option value="36500d">Last 100 years</option><option value="73000d">Last 200 years</option></optgroup><option value="day">Choose a day</option><option value="month">Choose month &amp; year</option></select></label>{dayMode && <input className="overview-flow-month-picker" type="date" aria-label="Select report day" value={selectedDate} onChange={(event) => setSelectedDate(event.target.value)}/>}{monthMode && <input className="overview-flow-month-picker" type="month" aria-label="Select report month and year" value={selectedMonth} onChange={(event) => setSelectedMonth(event.target.value)}/>}</div><FileActionMenu label="Export" direction="export" options={[{ label: 'CSV report', onSelect: exportReport, disabled: !report }, { label: 'PDF report', onSelect: () => void exportReportPdf().catch((cause: unknown) => setError(cause instanceof Error ? cause.message : 'PDF export failed.')), disabled: !report }]}/></div></section>
     <div className="reports-tabs" role="tablist" aria-label="Report types">{reportTabs.map(({ value, label, icon: Icon }) => <button key={value} role="tab" aria-selected={activeTab === value} className={activeTab === value ? 'active' : ''} onClick={() => setActiveTab(value)}><Icon size={14}/>{label}</button>)}</div>
     <div className="reports-filter-row"><span>{report ? `${dateLabel(report.start_date)} – ${dateLabel(report.end_date)}` : 'Selected period'}</span><div><span>VIEW:</span><button className="active">By category</button><button onClick={onOpenInventory}>Inventory</button>{activeTab === 'financial' && <button onClick={onOpenExpenses}>Expenses</button>}</div></div>
     {loading && <section className="overview-state">Loading reports from the API…</section>}
-    {!loading && error && <section className="overview-state overview-error"><strong>Could not load reports</strong><span>{error}</span><button className="catalog-button catalog-button-light" onClick={() => void loadReport(range, monthMode ? selectedMonth : undefined)}><RefreshCw size={14}/>Retry</button></section>}
+    {!loading && error && <section className="overview-state overview-error"><strong>Could not load reports</strong><span>{error}</span><button className="catalog-button catalog-button-light" onClick={() => void loadReport(range, monthMode ? selectedMonth : undefined, dayMode ? selectedDate : undefined)}><RefreshCw size={14}/>Retry</button></section>}
     {!loading && report && <>
       <section className="reports-metrics" aria-label="Report metrics">{metricCards.map(({ label, value, detail, icon: Icon, tone }) => <article className={`reports-metric ${tone}`} key={label}><div><span>{label}</span><Icon size={15}/></div><strong>{value}</strong><small>{detail}</small></article>)}</section>
+      {activeTab === 'financial' && <section className="overview-panel reports-pnl-panel" aria-label="Profit and loss calculation">
+        <div className="overview-panel-heading"><div><span>SELECTED PERIOD</span><h2>How your profit or loss is calculated</h2></div></div>
+        <div className="reports-pnl-rows">
+          <div><span>Sales revenue</span><strong>{currency(report.revenue)}</strong></div>
+          <div><span>Less: cost of goods sold</span><strong>− {currency(report.cost_of_goods)}</strong></div>
+          <div className="reports-pnl-subtotal"><span>Gross profit / loss</span><strong>{currency(report.gross_profit)}</strong></div>
+          <div><span>Less: operating expenses</span><strong>− {currency(report.operating_expenses)}</strong></div>
+          <div className={`reports-pnl-result ${Number(report.net_profit) < 0 ? 'is-loss' : 'is-profit'}`}><span>{Number(report.net_profit) < 0 ? 'NET LOSS' : 'NET PROFIT'}</span><strong>{currency(report.net_profit)}</strong></div>
+        </div>
+        <p>Net result = sales revenue − cost of goods sold − approved or paid operating expenses for this period.</p>
+      </section>}
       <div className="reports-analysis-grid">
-        <section className="overview-panel reports-chart-panel"><div className="overview-panel-heading"><div><span>{activeTab === 'inventory' ? 'STOCK HEALTH' : activeTab === 'purchases' ? 'SUPPLIER ACTIVITY' : 'PERFORMANCE'}</span><h2>{activeTab === 'inventory' ? 'Inventory value by category' : activeTab === 'purchases' ? 'Purchase spend trend' : activeTab === 'financial' ? 'Gross profit & revenue trend' : 'Revenue & gross profit trend'}</h2></div><span className="overview-period">{monthMode ? 'Daily totals' : report.series_interval === 'year' ? 'Yearly totals' : report.series_interval === 'month' || range === '365d' ? 'Monthly totals' : range === '90d' || range === '180d' ? 'Weekly totals' : 'Daily totals'}</span></div>
-          <div className="reports-chart-legend">{activeTab === 'inventory' ? <span><i className="inventory-legend"/>Inventory value</span> : activeTab === 'purchases' ? <span><i className="purchase-legend"/>Received spend</span> : <><span><i className="revenue-legend"/>Revenue</span><span><i className="profit-legend"/>Gross profit</span>{activeTab === 'financial' && <><span><i className="purchase-legend"/>Purchases</span><span><i className="expense-legend"/>Operating expenses</span></>}</>}</div>
+        <section className="overview-panel reports-chart-panel"><div className="overview-panel-heading"><div><span>{activeTab === 'inventory' ? 'STOCK HEALTH' : activeTab === 'purchases' ? 'SUPPLIER ACTIVITY' : 'PERFORMANCE'}</span><h2>{activeTab === 'inventory' ? 'Inventory value by category' : activeTab === 'purchases' ? 'Purchase spend trend' : activeTab === 'financial' ? 'Profit & loss, revenue trend' : 'Revenue & gross profit trend'}</h2></div><span className="overview-period">{monthMode ? 'Daily totals' : report.series_interval === 'year' ? 'Yearly totals' : report.series_interval === 'month' || range === '365d' ? 'Monthly totals' : range === '90d' || range === '180d' ? 'Weekly totals' : 'Daily totals'}</span></div>
+          <div className="reports-chart-legend">{activeTab === 'inventory' ? <span><i className="inventory-legend"/>Inventory value</span> : activeTab === 'purchases' ? <span><i className="purchase-legend"/>Received spend</span> : activeTab === 'financial' ? <><span><i className="revenue-legend"/>Sales revenue</span><span><i className="purchase-legend"/>Cost of goods</span><span><i className="expense-legend"/>Operating expenses</span><span><i className="net-legend"/>Net profit</span><span><i className="loss-legend"/>Net loss</span></> : <><span><i className="revenue-legend"/>Revenue</span><span><i className="profit-legend"/>Gross profit</span></>}</div>
           <div className={`reports-chart ${activeTab === 'inventory' ? 'category-chart' : ''}`} role="img" aria-label={`${activeTab === 'inventory' ? 'Category inventory valuation' : `${report.range_days}-day ${activeTab} report trend`}`}>
             {chartData.map((day) => <div className="reports-chart-day" key={day.label} title={`${day.label}: ${currency(day.primary)}`}>
-              <div className="reports-chart-bars">
+              <div className={`reports-chart-bars ${activeTab === 'financial' ? 'financial-chart-bars' : ''}`}>
                 <i className={activeTab === 'inventory' ? 'inventory-bar' : activeTab === 'purchases' ? 'purchase-bar' : 'revenue-bar'} style={{ height: `${day.primary ? Math.max(day.primary / maxValue * 100, 2) : 0}%` }}/>
-                {day.secondary > 0 && <i className="profit-bar" style={{ height: `${Math.max(day.secondary / maxValue * 100, 2)}%` }}/>}
-                {day.tertiary > 0 && <i className="purchase-bar" style={{ height: `${Math.max(day.tertiary / maxValue * 100, 2)}%` }}/ >}
-                {day.quaternary > 0 && <i className="expense-bar" style={{ height: `${Math.max(day.quaternary / maxValue * 100, 2)}%` }}/ >}
+                {day.secondary > 0 && <i className={activeTab === 'financial' ? 'purchase-bar' : 'profit-bar'} style={{ height: `${Math.max(day.secondary / maxValue * 100, 2)}%` }}/>}
+                {day.tertiary > 0 && <i className={activeTab === 'financial' ? 'expense-bar' : 'purchase-bar'} style={{ height: `${Math.max(day.tertiary / maxValue * 100, 2)}%` }}/>}
+                {day.quaternary > 0 && <i className="expense-bar" style={{ height: `${Math.max(day.quaternary / maxValue * 100, 2)}%` }}/>}
+                {day.netResult !== 0 && <i className={day.netResult < 0 ? 'net-loss-bar' : 'net-profit-bar'} title={`${day.netResult < 0 ? 'Net loss' : 'Net profit'}: ${currency(day.netResult)}`} style={{ height: `${Math.max(Math.abs(day.netResult) / maxValue * 100, 2)}%` }}/>}
               </div>
             </div>)}
           </div>

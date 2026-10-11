@@ -160,12 +160,38 @@ class PurchaseSerializer(serializers.ModelSerializer):
     items = PurchaseItemSerializer(many=True)
     item_count = serializers.SerializerMethodField()
     total = serializers.SerializerMethodField()
+    paid_amount = serializers.SerializerMethodField()
+    remaining_balance = serializers.SerializerMethodField()
+    payment_status = serializers.SerializerMethodField()
 
     def get_item_count(self, purchase):
         return sum(item.quantity for item in purchase.items.all())
 
     def get_total(self, purchase):
         return str(sum((item.quantity * item.unit_cost for item in purchase.items.all()), start=0))
+
+    def get_paid_amount(self, purchase):
+        return str(sum(
+            (entry.amount for entry in purchase.ledger_entries.all()
+             if entry.entry_type == SupplierLedgerEntry.EntryType.PAYMENT),
+            start=Decimal('0'),
+        ).quantize(Decimal('0.01')))
+
+    def get_remaining_balance(self, purchase):
+        total = sum((item.quantity * item.unit_cost for item in purchase.items.all()), start=Decimal('0'))
+        paid = sum(
+            (entry.amount for entry in purchase.ledger_entries.all()
+             if entry.entry_type == SupplierLedgerEntry.EntryType.PAYMENT),
+            start=Decimal('0'),
+        )
+        return str(max(total - paid, Decimal('0')).quantize(Decimal('0.01')))
+
+    def get_payment_status(self, purchase):
+        if purchase.status != Purchase.Status.RECEIVED:
+            return 'not_due'
+        return 'paid' if Decimal(self.get_remaining_balance(purchase)) == 0 else (
+            'partial' if Decimal(self.get_paid_amount(purchase)) > 0 else 'unpaid'
+        )
 
     def validate_items(self, items):
         product_ids = [item['product'].id for item in items]
@@ -185,7 +211,7 @@ class PurchaseSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Purchase
-        fields = ['id', 'reference', 'supplier', 'supplier_name', 'status', 'items', 'item_count', 'total', 'notes', 'expected_delivery', 'ordered_at', 'received_at']
+        fields = ['id', 'reference', 'supplier', 'supplier_name', 'status', 'items', 'item_count', 'total', 'paid_amount', 'remaining_balance', 'payment_status', 'notes', 'expected_delivery', 'ordered_at', 'received_at']
         read_only_fields = ['id', 'reference', 'status', 'ordered_at', 'received_at']
 
 
@@ -205,13 +231,38 @@ class SaleSerializer(serializers.ModelSerializer):
     items = SaleItemSerializer(many=True, read_only=True)
     payment_method_display = serializers.CharField(source='get_payment_method_display', read_only=True)
     customer = serializers.PrimaryKeyRelatedField(read_only=True)
+    paid_amount = serializers.SerializerMethodField()
+    remaining_balance = serializers.SerializerMethodField()
+    payment_status = serializers.SerializerMethodField()
+
+    def get_paid_amount(self, sale):
+        if sale.payment_method != Sale.PaymentMethod.ACCOUNT:
+            return str(sale.total.quantize(Decimal('0.01')))
+        paid_amounts = self.context.get('sale_paid_amounts')
+        paid = paid_amounts.get(sale.id, Decimal('0')) if paid_amounts is not None else sum(
+            (entry.amount for entry in sale.ledger_entries.all()
+             if entry.entry_type == CustomerLedgerEntry.EntryType.PAYMENT),
+            Decimal('0'),
+        )
+        return str(paid.quantize(Decimal('0.01')))
+
+    def get_remaining_balance(self, sale):
+        if sale.payment_method != Sale.PaymentMethod.ACCOUNT:
+            return '0.00'
+        return str(max(sale.total - Decimal(self.get_paid_amount(sale)), Decimal('0')).quantize(Decimal('0.01')))
+
+    def get_payment_status(self, sale):
+        remaining_balance = Decimal(self.get_remaining_balance(sale))
+        if remaining_balance == 0:
+            return 'paid'
+        return 'partial' if Decimal(self.get_paid_amount(sale)) > 0 else 'unpaid'
 
     class Meta:
         model = Sale
         fields = [
             'id', 'receipt_number', 'customer', 'customer_name', 'payment_method', 'payment_method_display',
             'subtotal', 'discount_percent', 'discount_amount', 'tax_rate', 'tax_amount', 'total',
-            'cash_tendered', 'change_due', 'items', 'created_at',
+            'cash_tendered', 'change_due', 'paid_amount', 'remaining_balance', 'payment_status', 'items', 'created_at',
         ]
         read_only_fields = fields
 
@@ -258,6 +309,7 @@ class CustomerPaymentSerializer(serializers.Serializer):
     amount = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal('0.01'))
     reference = serializers.CharField(max_length=80, required=False, allow_blank=True)
     note = serializers.CharField(max_length=240, required=False, allow_blank=True)
+    sale = serializers.PrimaryKeyRelatedField(queryset=Sale.objects.all(), required=False)
 
 
 class SupplierLedgerEntrySerializer(serializers.ModelSerializer):

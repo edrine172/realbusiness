@@ -21,15 +21,8 @@
 .account-entry-form .catalog-field{gap:4px;color:#425367;font-size:8px;font-weight:700}
 .account-entry-form .catalog-field input{min-height:35px;padding:7px 9px;border:1px solid #dce3eb;border-radius:4px;background:#f5f8ff;color:#24364b;font-size:9px}
 .account-entry-form .catalog-field input:focus{border-color:#7198e7;outline:3px solid #235dd81c}
-.account-entry-password-field{display:grid;gap:4px}
-.account-entry-password-input{position:relative;display:flex;align-items:center}
-.account-entry-password-input input{width:100%;padding-right:34px!important}
-.account-entry-password-toggle{position:absolute;right:8px;display:grid;place-items:center;width:20px;height:20px;border:0;border-radius:50%;background:transparent;color:#53677d;cursor:pointer}
-.account-entry-password-toggle:hover,.account-entry-password-toggle:focus-visible{background:#edf3ff;color:#235dd8;outline:none}
 .account-entry-name-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .account-entry-password-note{display:flex;align-items:center;gap:6px;margin:-4px 0 0;color:#76869a;font-size:8px}
-.account-entry-forgot-password{justify-self:start;margin:-4px 0 0;padding:0;border:0;background:transparent;color:#235dd8;font-size:8px;font-weight:700;cursor:pointer}
-.account-entry-forgot-password:hover,.account-entry-forgot-password:focus-visible{text-decoration:underline}
 .account-entry-error{margin:0;padding:8px 9px;border:1px solid #f1c9c0;border-radius:4px;background:#fff3ef;color:#a33f2d;font-size:9px;line-height:1.45}
 .account-entry-submit{min-height:38px;margin-top:2px;display:flex;align-items:center;justify-content:center;gap:9px;border:0;border-radius:4px;background:#235dd8;color:#fff;font-size:9px;font-weight:700}
 .account-entry-submit:hover{background:#1749b4}

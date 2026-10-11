@@ -53,8 +53,6 @@ def access_login(request):
         data = json.loads(request.body or '{}')
     except JSONDecodeError:
         return JsonResponse({'detail': 'Invalid JSON body.'}, status=400)
-    if not isinstance(data, dict):
-        return JsonResponse({'detail': 'Login data must be an object.'}, status=400)
     user = authenticate(request, username=data.get('username', ''), password=data.get('password', ''))
     if user is None or not user.is_active or not (user.is_staff or user.is_superuser):
         return JsonResponse({'detail': 'Administrator sign-in failed.'}, status=400)
@@ -116,41 +114,6 @@ def account_register(request):
     )
     _audit(user, 'session.registered', 'user', user.pk)
     return JsonResponse({'user': _user_payload(user), 'csrf_token': get_token(request)}, status=201)
-
-
-@csrf_protect
-@require_POST
-def account_reset_password(request):
-    try:
-        data = json.loads(request.body or '{}')
-    except JSONDecodeError:
-        return JsonResponse({'detail': 'Invalid JSON body.'}, status=400)
-    if not isinstance(data, dict):
-        return JsonResponse({'detail': 'Password reset data must be an object.'}, status=400)
-
-    identifier = str(data.get('username', '') or data.get('email', '')).strip()
-    password = str(data.get('password', ''))
-    confirm_password = str(data.get('confirm_password', ''))
-
-    if not identifier:
-        return JsonResponse({'username': 'Enter your username or email address.'}, status=400)
-    if len(password) < 8:
-        return JsonResponse({'password': 'Password must be at least 8 characters.'}, status=400)
-    if password != confirm_password:
-        return JsonResponse({'confirm_password': 'Passwords do not match.'}, status=400)
-
-    user = User.objects.filter(username__iexact=identifier).first()
-    if user is None:
-        user = User.objects.filter(email__iexact=identifier).first()
-    if user is None:
-        return JsonResponse({'username': 'No account matches that username or email.'}, status=400)
-    if not user.is_active:
-        return JsonResponse({'username': 'This account is not active.'}, status=400)
-
-    user.set_password(password)
-    user.save(update_fields=['password'])
-    _audit(user, 'session.password_reset', 'user', user.pk)
-    return JsonResponse({'ok': True, 'csrf_token': get_token(request)}, status=200)
 
 
 @csrf_protect

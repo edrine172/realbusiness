@@ -22,12 +22,18 @@ const currentMonth = () => {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 };
+const currentDate = () => {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+};
 
 export default function DashboardOverview({ onOpenProducts, onOpenInventory, onOpenPurchases, onOpenPOS, onOpenReports, onOpenExpenses }: { onOpenProducts: () => void; onOpenInventory: () => void; onOpenPurchases: () => void; onOpenPOS: () => void; onOpenReports: () => void; onOpenExpenses: () => void }) {
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [flowRange, setFlowRange] = useState<FlowRange>('1d');
   const [flowMonthMode, setFlowMonthMode] = useState(false);
+  const [flowDayMode, setFlowDayMode] = useState(false);
   const [flowMonth, setFlowMonth] = useState(currentMonth);
+  const [flowDate, setFlowDate] = useState(currentDate);
   const [flowMovements, setFlowMovements] = useState<StockMovement[]>([]);
   const [flowLoading, setFlowLoading] = useState(false);
   const [flowError, setFlowError] = useState('');
@@ -47,12 +53,12 @@ export default function DashboardOverview({ onOpenProducts, onOpenInventory, onO
     }
   }
 
-  async function loadInventoryFlow(range: FlowRange = flowRange, month?: string) {
+  async function loadInventoryFlow(range: FlowRange = flowRange, month?: string, date?: string) {
     const requestId = ++flowRequest.current;
     setFlowLoading(true);
     setFlowError('');
     try {
-      const movements = await api.movements(month ? undefined : daysForFlowRange(range), month);
+      const movements = await api.movements(date || month ? undefined : daysForFlowRange(range), month, date);
       if (requestId === flowRequest.current) setFlowMovements(movements);
     } catch (cause) {
       if (requestId === flowRequest.current) setFlowError(cause instanceof Error ? cause.message : 'Inventory flow could not be loaded.');
@@ -108,8 +114,8 @@ export default function DashboardOverview({ onOpenProducts, onOpenInventory, onO
       </div>
 
       <section className="overview-panel overview-activity-panel">
-        <div className="overview-panel-heading"><div><span>INVENTORY FLOW</span><h2>Movement history</h2></div><div className="overview-flow-controls"><label className="catalog-select"><select aria-label="Inventory flow history range" value={flowMonthMode ? 'month' : flowRange} onChange={(event) => { if (event.target.value === 'month') { setFlowMonthMode(true); void loadInventoryFlow(flowRange, flowMonth); } else { const range = event.target.value as FlowRange; setFlowMonthMode(false); setFlowRange(range); void loadInventoryFlow(range); } }}><optgroup label="Rolling history">{FLOW_RANGES.map((range) => <option key={range.value} value={range.value}>{range.label}</option>)}</optgroup><option value="month">Choose month &amp; year</option></select><ChevronDown size={13}/></label>{flowMonthMode && <input className="overview-flow-month-picker" type="month" aria-label="Select inventory flow month and year" value={flowMonth} onChange={(event) => { setFlowMonth(event.target.value); if (event.target.value) void loadInventoryFlow(flowRange, event.target.value); }}/>}</div></div>
-        {flowLoading ? <p className="overview-empty">Loading inventory flow…</p> : flowError ? <div className="overview-empty">{flowError} <button className="overview-text-action" onClick={() => void loadInventoryFlow(flowRange, flowMonthMode ? flowMonth : undefined)}>Retry</button></div> : flowMovements.length === 0 ? <p className="overview-empty">No inventory movements in the selected period.</p> : <div className="overview-activity-list">{flowMovements.map((movement) => {
+        <div className="overview-panel-heading"><div><span>INVENTORY FLOW</span><h2>Movement history</h2></div><div className="overview-flow-controls"><label className="catalog-select"><select aria-label="Inventory flow history range" value={flowDayMode ? 'day' : flowMonthMode ? 'month' : flowRange} onChange={(event) => { if (event.target.value === 'day') { setFlowDayMode(true); setFlowMonthMode(false); void loadInventoryFlow(flowRange, undefined, flowDate); } else if (event.target.value === 'month') { setFlowMonthMode(true); setFlowDayMode(false); void loadInventoryFlow(flowRange, flowMonth); } else { const range = event.target.value as FlowRange; setFlowMonthMode(false); setFlowDayMode(false); setFlowRange(range); void loadInventoryFlow(range); } }}><optgroup label="Rolling history">{FLOW_RANGES.map((range) => <option key={range.value} value={range.value}>{range.label}</option>)}</optgroup><option value="day">Choose a day</option><option value="month">Choose month &amp; year</option></select><ChevronDown size={13}/></label>{flowDayMode && <input className="overview-flow-month-picker" type="date" aria-label="Select inventory flow day" value={flowDate} onChange={(event) => { setFlowDate(event.target.value); if (event.target.value) void loadInventoryFlow(flowRange, undefined, event.target.value); }}/>}{flowMonthMode && <input className="overview-flow-month-picker" type="month" aria-label="Select inventory flow month and year" value={flowMonth} onChange={(event) => { setFlowMonth(event.target.value); if (event.target.value) void loadInventoryFlow(flowRange, event.target.value); }}/>}</div></div>
+        {flowLoading ? <p className="overview-empty">Loading inventory flow…</p> : flowError ? <div className="overview-empty">{flowError} <button className="overview-text-action" onClick={() => void loadInventoryFlow(flowRange, flowMonthMode ? flowMonth : undefined, flowDayMode ? flowDate : undefined)}>Retry</button></div> : flowMovements.length === 0 ? <p className="overview-empty">No inventory movements in the selected period.</p> : <div className="overview-activity-list">{flowMovements.map((movement) => {
           const inbound = movement.movement_type === 'inbound' || movement.movement_type === 'return';
           const movementLabel = movement.movement_type.replace('_', ' ');
           return <div className="overview-activity-row" key={movement.id}>

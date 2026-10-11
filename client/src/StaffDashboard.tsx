@@ -258,8 +258,9 @@ export default function StaffDashboard({ onNavigate, onSignOut }: { onNavigate: 
       setDashboard(await api.staffDashboard(period));
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : 'The staff service could not be reached.';
-      if (/authentication credentials|administrator sign-in required/i.test(message)) setAdmin(null);
-      else setError(message);
+      if (!/administrator sign-in required|authentication credentials/i.test(message)) {
+        setError(message);
+      } else setAdmin(null);
     } finally { setLoading(false); }
   }
 

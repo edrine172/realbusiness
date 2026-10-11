@@ -3,12 +3,13 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
-backend/db.sqlite3
+server/db.sqlite3
+*.sqlite3
 
 # Node
 node_modules/
-frontend/dist/
-frontend/tsconfig.tsbuildinfo
+client/dist/
+client/tsconfig.tsbuildinfo
 frontend/.env.local
 
 # Editors

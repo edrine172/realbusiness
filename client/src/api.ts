@@ -281,6 +281,9 @@ export interface CustomerDashboardData {
   lifetime_revenue: string;
   completed_orders: number;
   outstanding_balance: string;
+  account_charges: string;
+  account_payments: string;
+  account_credits: string;
   sales: Sale[];
   ledger_entries: CustomerLedgerEntry[];
 }
@@ -314,6 +317,9 @@ export interface Purchase {
   items: PurchaseItem[];
   item_count: number;
   total: string;
+  paid_amount: string;
+  remaining_balance: string;
+  payment_status: 'not_due' | 'unpaid' | 'partial' | 'paid';
   notes: string;
   expected_delivery: string | null;
   ordered_at: string;
@@ -355,6 +361,9 @@ export interface Sale {
   total: string;
   cash_tendered: string | null;
   change_due: string;
+  paid_amount: string;
+  remaining_balance: string;
+  payment_status: 'paid' | 'partial' | 'unpaid';
   items: SaleLine[];
   created_at: string;
 }
@@ -388,7 +397,7 @@ export interface ReportsSummary {
   received_orders: number;
   open_orders: number;
   open_purchase_value: string;
-  daily_series: Array<{ label: string; revenue: number; gross_profit: number; purchases: number; expenses: number }>;
+  daily_series: Array<{ label: string; revenue: number; cost_of_goods: number; gross_profit: number; purchases: number; expenses: number; net_profit: number }>;
   categories: Array<{ name: string; units: number; revenue: string; percent: number }>;
   inventory_categories: Array<{ name: string; units: number; revenue: string; percent: number }>;
   purchase_categories: Array<{ name: string; units: number; revenue: string; percent: number }>;
@@ -625,7 +634,7 @@ async function accountAuthRequest(path: string, payload: Record<string, string>)
   if (!csrfResponse.ok) throw new Error('Could not initialize secure account access.');
   const csrfData = await csrfResponse.json() as { csrf_token: string };
   accessCsrfToken = csrfData.csrf_token;
-  const result = await request<{ user?: AccessUser; ok?: boolean; csrf_token: string }>(path, { method: 'POST', body: JSON.stringify(payload) });
+  const result = await request<{ user: AccessUser; csrf_token: string }>(path, { method: 'POST', body: JSON.stringify(payload) });
   accessCsrfToken = result.csrf_token;
   return result;
 }
@@ -633,12 +642,6 @@ async function accountAuthRequest(path: string, payload: Record<string, string>)
 export const api = {
   accountSignIn: (username: string, password: string) => accountAuthRequest('/account/login/', { username, password }),
   accountSignUp: (account: { username: string; password: string; email: string; first_name: string; last_name: string }) => accountAuthRequest('/account/register/', account),
-  accountResetPassword: (payload: { username?: string; email?: string; password: string; confirm_password: string }) => accountAuthRequest('/account/reset-password/', {
-    username: payload.username ?? '',
-    email: payload.email ?? '',
-    password: payload.password,
-    confirm_password: payload.confirm_password,
-  }),
   accountSession: () => request<{ user: AccessUser }>('/account/session/'),
   accountLogout: () => request<{ ok: boolean }>('/account/logout/', { method: 'POST', body: JSON.stringify({}) }),
   async accessLogin(username: string, password: string) {
@@ -684,10 +687,11 @@ export const api = {
   products: () => request<Product[]>('/products/'),
   categories: () => request<Category[]>('/categories/'),
   suppliers: () => request<Supplier[]>('/suppliers/'),
-  movements: (days?: number, month?: string) => {
+  movements: (days?: number, month?: string, date?: string) => {
     const params = new URLSearchParams();
     if (days) params.set('days', String(days));
     if (month) params.set('month', month);
+    if (date) params.set('date', date);
     return request<StockMovement[]>(`/movements/${params.size ? `?${params}` : ''}`);
   },
   createProduct: (product: Pick<Product, 'name' | 'sku' | 'quantity' | 'reorder_level' | 'unit_price' | 'cost_price' | 'location'> & { category: number; supplier?: number | null }) =>
@@ -705,6 +709,11 @@ export const api = {
     request<Purchase>('/purchases/', { method: 'POST', body: JSON.stringify(purchase) }),
   receivePurchase: (id: number) =>
     request<Purchase>(`/purchases/${id}/receive/`, { method: 'POST', body: JSON.stringify({}) }),
+  payPurchase: (id: number, payment: { amount: string; reference?: string; note?: string }) =>
+    request<{ purchase: Purchase; ledger_entry: SupplierLedgerEntry }>(`/purchases/${id}/payments/`, {
+      method: 'POST',
+      body: JSON.stringify(payment),
+    }),
   salesSummary: () => request<SalesSummary>('/sales/summary/'),
   checkoutSale: (sale: {
     customer?: number | null;
@@ -714,8 +723,8 @@ export const api = {
     cash_tendered?: string;
     items: Array<{ product: number; quantity: number }>;
   }) => request<Sale>('/sales/checkout/', { method: 'POST', body: JSON.stringify(sale) }),
-  reportsSummary: (range: '1d' | '7d' | '30d' | '90d' | '180d' | '365d' | '730d' | '1825d' | '3650d' | '18250d' | '36500d' | '73000d' = '30d', month?: string) => {
-    const params = new URLSearchParams(month ? { month } : { range });
+  reportsSummary: (range: '1d' | '7d' | '30d' | '90d' | '180d' | '365d' | '730d' | '1825d' | '3650d' | '18250d' | '36500d' | '73000d' = '30d', month?: string, date?: string) => {
+    const params = new URLSearchParams(date ? { date } : month ? { month } : { range });
     return request<ReportsSummary>(`/reports/summary/?${params}`);
   },
   expenses: (filters?: { start_date?: string; end_date?: string; category?: string; payment_method?: string; status?: string }) => {
@@ -748,7 +757,7 @@ export const api = {
   updateCustomer: (id: number, customer: Partial<Omit<Customer, 'id' | 'customer_code' | 'tax_exempt' | 'outstanding_balance' | 'lifetime_revenue' | 'completed_orders' | 'created_at'>>) =>
     request<Customer>(`/customers/${id}/`, { method: 'PATCH', body: JSON.stringify(customer) }),
   customerDashboard: (id: number) => request<CustomerDashboardData>(`/customers/${id}/dashboard/`),
-  receiveCustomerPayment: (id: number, payment: { amount: string; reference?: string; note?: string }) =>
+  receiveCustomerPayment: (id: number, payment: { amount: string; reference?: string; note?: string; sale?: number }) =>
     request<{ customer: Customer; ledger_entry: CustomerLedgerEntry }>(`/customers/${id}/payments/`, { method: 'POST', body: JSON.stringify(payment) }),
   supplierDashboard: (id: number) => request<SupplierDashboardData>(`/suppliers/${id}/dashboard/`),
   createSupplier: (supplier: Omit<Supplier, 'id' | 'supplier_code' | 'outstanding_balance' | 'lifetime_spend' | 'completed_orders' | 'on_time_delivery_rate' | 'created_at'>) =>

@@ -24,6 +24,11 @@ const currentMonth = () => {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 };
+const currentDate = () => {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+};
+const localDateValue = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 const dateLabel = (value: string) => new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(value));
 
 function PurchaseForm({ products, suppliers, initialSupplierId, onClose, onSaved }: {
@@ -93,6 +98,57 @@ function PurchaseForm({ products, suppliers, initialSupplierId, onClose, onSaved
   </div>;
 }
 
+function PurchasePaymentForm({ purchase, onClose, onSaved }: {
+  purchase: Purchase;
+  onClose: () => void;
+  onSaved: () => Promise<void>;
+}) {
+  const [amount, setAmount] = useState(purchase.remaining_balance);
+  const [reference, setReference] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const remaining = Number(purchase.remaining_balance);
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const paymentAmount = Number(amount);
+    if (!Number.isFinite(paymentAmount) || paymentAmount <= 0 || paymentAmount > remaining) {
+      setError(`Enter an amount greater than zero and no more than ${currency(purchase.remaining_balance)}.`);
+      return;
+    }
+    setSaving(true);
+    setError('');
+    try {
+      await api.payPurchase(purchase.id, { amount: paymentAmount.toFixed(2), reference: reference.trim() });
+      await onSaved();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not record this supplier payment.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return <div className="catalog-overlay" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+    <form className="catalog-modal purchase-payment-modal" onSubmit={submit}>
+      <div className="catalog-modal-heading"><div><span className="catalog-eyebrow">SUPPLIER PAYMENT</span><h2>Confirm payment</h2><p>Record how much the supplier has received for {purchase.reference}.</p></div><button className="catalog-icon-button" type="button" onClick={onClose} aria-label="Close"><X size={18}/></button></div>
+      <div className="purchase-payment-summary">
+        <div><span>ORDER TOTAL</span><strong>{currency(purchase.total)}</strong></div>
+        <div><span>ALREADY PAID</span><strong>{currency(purchase.paid_amount)}</strong></div>
+        <div><span>REMAINING</span><strong>{currency(purchase.remaining_balance)}</strong></div>
+      </div>
+      <div className="purchase-payment-presets">
+        <button type="button" className="catalog-button catalog-button-light" onClick={() => setAmount((remaining / 2).toFixed(2))}>Half of remaining</button>
+        <button type="button" className="catalog-button catalog-button-light" onClick={() => setAmount(purchase.remaining_balance)}>Pay in full</button>
+      </div>
+      <label className="catalog-field">Amount paid<input type="number" min="0.01" max={purchase.remaining_balance} step="0.01" required value={amount} onChange={(event) => setAmount(event.target.value)}/></label>
+      <label className="catalog-field">Payment reference <span className="purchase-payment-optional">(optional)</span><input maxLength={80} value={reference} onChange={(event) => setReference(event.target.value)} placeholder="Receipt, transfer, or transaction number"/></label>
+      <p className="purchase-payment-confirmation">Confirming records this payment and reduces the supplier’s outstanding account balance.</p>
+      {error && <p className="catalog-form-error">{error}</p>}
+      <div className="catalog-modal-actions"><button type="button" className="catalog-button catalog-button-light" onClick={onClose}>Cancel</button><button className="catalog-button catalog-button-primary" disabled={saving}>{saving ? 'Recording…' : 'Confirm payment'}</button></div>
+    </form>
+  </div>;
+}
+
 export default function PurchasesDashboard({ initialSupplierId = null, onInitialSupplierUsed, onOpenInventory, onOpenProducts }: {
   initialSupplierId?: number | null;
   onInitialSupplierUsed?: () => void;
@@ -110,9 +166,12 @@ export default function PurchasesDashboard({ initialSupplierId = null, onInitial
   const [statusFilter, setStatusFilter] = useState<PurchaseStatusFilter>('All orders');
   const [historyRange, setHistoryRange] = useState<PurchaseHistoryRange>('1d');
   const [historyMonthMode, setHistoryMonthMode] = useState(false);
+  const [historyDayMode, setHistoryDayMode] = useState(false);
   const [historyMonth, setHistoryMonth] = useState(currentMonth);
+  const [historyDate, setHistoryDate] = useState(currentDate);
   const [showForm, setShowForm] = useState(false);
   const [busyPurchase, setBusyPurchase] = useState<number | null>(null);
+  const [paymentPurchase, setPaymentPurchase] = useState<Purchase | null>(null);
   const [notice, setNotice] = useState('');
 
   async function loadData() {
@@ -150,12 +209,14 @@ export default function PurchasesDashboard({ initialSupplierId = null, onInitial
       const matchesStatus = statusFilter === 'All orders' || purchase.status === statusFilter.toLowerCase();
       const orderedDate = new Date(purchase.ordered_at);
       const orderedAt = orderedDate.getTime();
-      const matchesRange = historyMonthMode
-        ? Number.isFinite(orderedAt) && orderedDate.getFullYear() === selectedYear && orderedDate.getMonth() + 1 === selectedMonth
-        : Number.isFinite(orderedAt) && orderedAt >= rangeStart && orderedAt <= now;
+      const matchesRange = historyDayMode
+        ? Number.isFinite(orderedAt) && localDateValue(orderedDate) === historyDate
+        : historyMonthMode
+          ? Number.isFinite(orderedAt) && orderedDate.getFullYear() === selectedYear && orderedDate.getMonth() + 1 === selectedMonth
+          : Number.isFinite(orderedAt) && orderedAt >= rangeStart && orderedAt <= now;
       return matchesTerm && matchesStatus && matchesRange;
     });
-  }, [purchases, query, statusFilter, historyRange, historyMonthMode, historyMonth]);
+  }, [purchases, query, statusFilter, historyRange, historyMonthMode, historyMonth, historyDayMode, historyDate]);
 
   async function receive(purchase: Purchase) {
     setBusyPurchase(purchase.id);
@@ -182,19 +243,22 @@ export default function PurchasesDashboard({ initialSupplierId = null, onInitial
     {loading && <section className="overview-state">Loading purchase orders…</section>}
     {!loading && error && <section className="overview-state overview-error"><strong>Could not load purchases</strong><span>{error}</span><button className="catalog-button catalog-button-light" onClick={() => void loadData()}><RefreshCw size={14}/>Retry</button></section>}
     {!loading && !error && <>
-      <section className="catalog-filter-panel purchase-filters"><div className="catalog-filter-row"><label className="catalog-search product-search"><Search size={15}/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search orders, suppliers, products"/><kbd>/</kbd></label><label className="catalog-select"><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as PurchaseStatusFilter)}><option>All orders</option><option>Ordered</option><option>Received</option><option>Cancelled</option></select><ChevronDown size={13}/></label><div className="overview-flow-controls"><label className="catalog-select"><select aria-label="Purchase history range" value={historyMonthMode ? 'month' : historyRange} onChange={(event) => { if (event.target.value === 'month') setHistoryMonthMode(true); else { setHistoryMonthMode(false); setHistoryRange(event.target.value as PurchaseHistoryRange); } }}><optgroup label="Rolling history">{PURCHASE_HISTORY_RANGES.map((range) => <option key={range.value} value={range.value}>{range.label}</option>)}</optgroup><option value="month">Choose month &amp; year</option></select><ChevronDown size={13}/></label>{historyMonthMode && <input className="overview-flow-month-picker" type="month" aria-label="Select purchase history month and year" value={historyMonth} onChange={(event) => setHistoryMonth(event.target.value)}/>}</div><span className="inventory-result-count">{filteredPurchases.length} orders</span></div></section>
+      <section className="catalog-filter-panel purchase-filters"><div className="catalog-filter-row"><label className="catalog-search product-search"><Search size={15}/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search orders, suppliers, products"/><kbd>/</kbd></label><label className="catalog-select"><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as PurchaseStatusFilter)}><option>All orders</option><option>Ordered</option><option>Received</option><option>Cancelled</option></select><ChevronDown size={13}/></label><div className="overview-flow-controls"><label className="catalog-select"><select aria-label="Purchase history range" value={historyDayMode ? 'day' : historyMonthMode ? 'month' : historyRange} onChange={(event) => { if (event.target.value === 'day') { setHistoryDayMode(true); setHistoryMonthMode(false); } else if (event.target.value === 'month') { setHistoryMonthMode(true); setHistoryDayMode(false); } else { setHistoryMonthMode(false); setHistoryDayMode(false); setHistoryRange(event.target.value as PurchaseHistoryRange); } }}><optgroup label="Rolling history">{PURCHASE_HISTORY_RANGES.map((range) => <option key={range.value} value={range.value}>{range.label}</option>)}</optgroup><option value="day">Choose a day</option><option value="month">Choose month &amp; year</option></select><ChevronDown size={13}/></label>{historyDayMode && <input className="overview-flow-month-picker" type="date" aria-label="Select purchase history day" value={historyDate} onChange={(event) => setHistoryDate(event.target.value)}/>}{historyMonthMode && <input className="overview-flow-month-picker" type="month" aria-label="Select purchase history month and year" value={historyMonth} onChange={(event) => setHistoryMonth(event.target.value)}/>}</div><span className="inventory-result-count">{filteredPurchases.length} orders</span></div></section>
       {error && <section className="purchase-inline-error"><CircleAlert size={14}/>{error}</section>}
       {notice && <div className="catalog-toast"><Check size={15}/>{notice}<button onClick={() => setNotice('')} aria-label="Dismiss"><X size={14}/></button></div>}
-      <section className="catalog-table-panel purchase-table-panel"><div className="catalog-table-scroll"><table className="catalog-table purchase-table"><thead><tr><th>ORDER</th><th>SUPPLIER</th><th>ITEMS</th><th>ORDERED</th><th>TOTAL</th><th>STATUS</th><th aria-label="Actions"/></tr></thead><tbody>
+      <section className="catalog-table-panel purchase-table-panel"><div className="catalog-table-scroll"><table className="catalog-table purchase-table"><thead><tr><th>ORDER</th><th>SUPPLIER</th><th>ITEMS</th><th>ORDERED</th><th>TOTAL</th><th>PAID</th><th>REMAINING</th><th>PAYMENT</th><th>STATUS</th><th aria-label="Actions"/></tr></thead><tbody>
         {filteredPurchases.map((purchase) => <tr key={purchase.id}>
           <td><strong className="purchase-reference">{purchase.reference}</strong><small className="purchase-first-item">{purchase.items.slice(0, 2).map((item) => item.product_name).join(', ')}{purchase.items.length > 2 ? ` +${purchase.items.length - 2} more` : ''}</small></td>
           <td>{purchase.supplier_name}</td><td>{purchase.item_count.toLocaleString()} units</td><td>{dateLabel(purchase.ordered_at)}</td><td><strong>{currency(purchase.total)}</strong></td>
+          <td>{currency(purchase.paid_amount)}</td><td><strong>{currency(purchase.remaining_balance)}</strong></td>
+          <td><span className={`purchase-payment-status ${purchase.payment_status}`}>{purchase.payment_status === 'not_due' ? 'Not due' : purchase.payment_status}</span></td>
           <td><span className={`purchase-status ${purchase.status}`}>{purchase.status}</span></td>
-          <td>{purchase.status === 'ordered' ? <button className="catalog-button catalog-button-light purchase-receive-button" disabled={busyPurchase === purchase.id} onClick={() => void receive(purchase)}>{busyPurchase === purchase.id ? 'Receiving…' : 'Receive order'}</button> : <span className="catalog-muted">{purchase.status === 'received' && purchase.received_at ? `Received ${dateLabel(purchase.received_at)}` : '—'}</span>}</td>
+          <td>{purchase.status === 'ordered' ? <button className="catalog-button catalog-button-light purchase-receive-button" disabled={busyPurchase === purchase.id} onClick={() => void receive(purchase)}>{busyPurchase === purchase.id ? 'Receiving…' : 'Receive order'}</button> : purchase.payment_status !== 'paid' && purchase.status === 'received' ? <button className="catalog-button catalog-button-light purchase-receive-button" onClick={() => setPaymentPurchase(purchase)}>Record payment</button> : <span className="catalog-muted">{purchase.payment_status === 'paid' ? 'Paid in full' : '—'}</span>}</td>
         </tr>)}
-        {!filteredPurchases.length && <tr><td colSpan={7} className="catalog-state">No purchase orders match your filters. Create an order to get started.</td></tr>}
-      </tbody></table></div><footer className="catalog-table-footer"><span>Showing <b>{filteredPurchases.length}</b> of <b>{purchases.length}</b> purchase orders</span><button className="catalog-clear" onClick={() => { setQuery(''); setStatusFilter('All orders'); setHistoryRange('1d'); setHistoryMonthMode(false); setHistoryMonth(currentMonth()); }}>Clear filters</button></footer></section>
+        {!filteredPurchases.length && <tr><td colSpan={10} className="catalog-state">No purchase orders match your filters. Create an order to get started.</td></tr>}
+      </tbody></table></div><footer className="catalog-table-footer"><span>Showing <b>{filteredPurchases.length}</b> of <b>{purchases.length}</b> purchase orders</span><button className="catalog-clear" onClick={() => { setQuery(''); setStatusFilter('All orders'); setHistoryRange('1d'); setHistoryMonthMode(false); setHistoryDayMode(false); setHistoryMonth(currentMonth()); setHistoryDate(currentDate()); }}>Clear filters</button></footer></section>
     </>}
-    {showForm && <PurchaseForm products={products} suppliers={suppliers} initialSupplierId={preselectedSupplierId} onClose={() => setShowForm(false)} onSaved={async () => { setShowForm(false); await loadData(); setNotice('Purchase order created. Stock will update when it is received.'); }}/ >}
+    {showForm && <PurchaseForm products={products} suppliers={suppliers} initialSupplierId={preselectedSupplierId} onClose={() => setShowForm(false)} onSaved={async () => { setShowForm(false); await loadData(); setNotice('Purchase order created. Stock will update when it is received.'); }}/>}
+    {paymentPurchase && <PurchasePaymentForm purchase={paymentPurchase} onClose={() => setPaymentPurchase(null)} onSaved={async () => { const reference = paymentPurchase.reference; setPaymentPurchase(null); await loadData(); setNotice(`Payment recorded for ${reference}.`); }}/>}
   </>;
 }

@@ -1,6 +1,6 @@
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
-from .access_control import AccessDashboardViewSet, AccessGroupViewSet, AccessPermissionViewSet, AccessUserViewSet, access_csrf, access_login, access_logout, access_session, account_login, account_logout, account_register, account_reset_password, account_session
+from .access_control import AccessDashboardViewSet, AccessGroupViewSet, AccessPermissionViewSet, AccessUserViewSet, access_csrf, access_login, access_logout, access_session, account_login, account_logout, account_register, account_session
 from .views import CategoryViewSet, CustomerViewSet, ExpenseBudgetViewSet, ExpenseViewSet, NotificationViewSet, PayrollRunViewSet, ProductViewSet, PurchaseViewSet, SaleViewSet, StaffAttendanceViewSet, StaffMemberViewSet, StockMovementViewSet, SupplierViewSet, checkout, dashboard_summary, exchange_rates, expenses_bulk_upload, expenses_summary, inventory_adjustment, purchase_summary, reports_summary, sales_summary, staff_dashboard, system_settings
 
 router = DefaultRouter()
@@ -28,7 +28,6 @@ urlpatterns = [
     path('access/session/', access_session, name='access-session'),
     path('access/logout/', access_logout, name='access-logout'),
     path('account/register/', account_register, name='account-register'),
-    path('account/reset-password/', account_reset_password, name='account-reset-password'),
     path('account/login/', account_login, name='account-login'),
     path('account/session/', account_session, name='account-session'),
     path('account/logout/', account_logout, name='account-logout'),

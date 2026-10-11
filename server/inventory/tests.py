@@ -360,6 +360,24 @@ class InventoryAdjustmentTests(AdminAPITestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual([row['id'] for row in response.data], [current.id])
 
+    def test_stock_movement_history_filters_to_selected_day(self):
+        today = timezone.localdate()
+        selected = StockMovement.objects.create(product=self.product, movement_type='adjustment', quantity=1)
+        other = StockMovement.objects.create(product=self.product, movement_type='adjustment', quantity=-1)
+        StockMovement.objects.filter(pk=other.pk).update(created_at=timezone.now() - timedelta(days=1))
+
+        response = self.client.get(f'/api/movements/?date={today.isoformat()}')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([row['id'] for row in response.data], [selected.id])
+
+    def test_stock_movement_history_rejects_invalid_or_combined_date_filter(self):
+        invalid = self.client.get('/api/movements/?date=2026-02-30')
+        combined = self.client.get('/api/movements/?date=2026-02-28&days=7')
+
+        self.assertEqual(invalid.status_code, 400)
+        self.assertEqual(combined.status_code, 400)
+
     def test_stock_movement_history_rejects_invalid_month(self):
         response = self.client.get('/api/movements/?month=2026-13')
 
@@ -444,6 +462,63 @@ class PurchaseWorkflowTests(AdminAPITestCase):
         self.product.refresh_from_db()
         self.assertEqual(self.product.quantity, 10)
         self.assertEqual(StockMovement.objects.count(), 1)
+
+    def test_partial_and_full_purchase_payments_update_purchase_and_supplier_balances(self):
+        created = self.create_purchase()
+        purchase_id = created.data['id']
+        self.client.post(f'/api/purchases/{purchase_id}/receive/', {}, format='json')
+
+        partial = self.client.post(
+            f'/api/purchases/{purchase_id}/payments/',
+            {'amount': '20.00', 'reference': 'BANK-001'},
+            format='json',
+        )
+
+        self.assertEqual(partial.status_code, 201)
+        self.assertEqual(partial.data['purchase']['payment_status'], 'partial')
+        self.assertEqual(partial.data['purchase']['paid_amount'], '20.00')
+        self.assertEqual(partial.data['purchase']['remaining_balance'], '35.50')
+        self.assertEqual(partial.data['ledger_entry']['purchase_reference'], created.data['reference'])
+        self.supplier.refresh_from_db()
+        self.assertEqual(self.supplier.outstanding_balance, Decimal('35.50'))
+
+        full = self.client.post(
+            f'/api/purchases/{purchase_id}/payments/',
+            {'amount': '35.50'},
+            format='json',
+        )
+
+        self.assertEqual(full.status_code, 201)
+        self.assertEqual(full.data['purchase']['payment_status'], 'paid')
+        self.assertEqual(full.data['purchase']['paid_amount'], '55.50')
+        self.assertEqual(full.data['purchase']['remaining_balance'], '0.00')
+        self.supplier.refresh_from_db()
+        self.assertEqual(self.supplier.outstanding_balance, Decimal('0.00'))
+
+    def test_purchase_payment_cannot_be_recorded_before_receipt_or_exceed_balance(self):
+        created = self.create_purchase()
+        purchase_id = created.data['id']
+        before_receipt = self.client.post(
+            f'/api/purchases/{purchase_id}/payments/',
+            {'amount': '1.00'},
+            format='json',
+        )
+        self.assertEqual(before_receipt.status_code, 400)
+
+        self.client.post(f'/api/purchases/{purchase_id}/receive/', {}, format='json')
+        overpayment = self.client.post(
+            f'/api/purchases/{purchase_id}/payments/',
+            {'amount': '55.51'},
+            format='json',
+        )
+
+        self.assertEqual(overpayment.status_code, 400)
+        self.assertFalse(SupplierLedgerEntry.objects.filter(
+            purchase_id=purchase_id,
+            entry_type=SupplierLedgerEntry.EntryType.PAYMENT,
+        ).exists())
+        self.supplier.refresh_from_db()
+        self.assertEqual(self.supplier.outstanding_balance, Decimal('55.50'))
 
 
 class PointOfSaleTests(AdminAPITestCase):
@@ -567,6 +642,9 @@ class ReportsDashboardTests(AdminAPITestCase):
         self.assertEqual(response.data['inventory_categories'][0]['units'], 8)
         self.assertEqual(response.data['top_products'][0]['units_sold'], 2)
         self.assertEqual(len(response.data['daily_series']), 30)
+        self.assertEqual(response.data['daily_series'][-1]['cost_of_goods'], 8.0)
+        self.assertEqual(response.data['daily_series'][-1]['gross_profit'], 10.0)
+        self.assertEqual(response.data['daily_series'][-1]['net_profit'], 10.0)
 
     def test_report_range_is_bounded_to_supported_periods(self):
         for value, days in [
@@ -596,6 +674,25 @@ class ReportsDashboardTests(AdminAPITestCase):
         self.assertEqual(response.data['start_date'], today.replace(day=1).isoformat())
         self.assertEqual(response.data['revenue'], '18.00')
         self.assertEqual(response.data['purchase_spend'], '12.00')
+
+    def test_report_summary_filters_to_selected_day(self):
+        selected_day = timezone.localdate() - timedelta(days=1)
+        Sale.objects.filter(receipt_number='SALE-REPORT-001').update(
+            created_at=timezone.now() - timedelta(days=2),
+        )
+
+        response = self.client.get(f'/api/reports/summary/?date={selected_day.isoformat()}')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['start_date'], selected_day.isoformat())
+        self.assertEqual(response.data['end_date'], selected_day.isoformat())
+        self.assertEqual(response.data['range_days'], 1)
+        self.assertEqual(response.data['revenue'], '0.00')
+
+    def test_report_summary_rejects_invalid_selected_day(self):
+        response = self.client.get('/api/reports/summary/?date=2026-02-30')
+
+        self.assertEqual(response.status_code, 400)
 
     def test_report_summary_rejects_invalid_calendar_month(self):
         response = self.client.get('/api/reports/summary/?month=2026-13')
@@ -656,8 +753,95 @@ class CustomerAccountTests(AdminAPITestCase):
         self.assertEqual(dashboard['completed_orders'], 1)
         self.assertEqual(dashboard['lifetime_revenue'], '20.00')
         self.assertEqual(dashboard['outstanding_balance'], '15.00')
+        self.assertEqual(dashboard['account_charges'], '20.00')
+        self.assertEqual(dashboard['account_payments'], '5.00')
+        self.assertEqual(dashboard['account_credits'], '0.00')
         self.assertEqual(len(dashboard['sales']), 1)
+        self.assertEqual(dashboard['sales'][0]['paid_amount'], '5.00')
+        self.assertEqual(dashboard['sales'][0]['remaining_balance'], '15.00')
+        self.assertEqual(dashboard['sales'][0]['payment_status'], 'partial')
+        self.assertEqual(dashboard['sales'][0]['items'][0]['product_name'], self.product.name)
+        self.assertEqual(dashboard['sales'][0]['items'][0]['line_total'], '20.00')
         self.assertEqual(len(dashboard['ledger_entries']), 2)
+
+        full_payment = self.client.post(f'/api/customers/{self.customer.id}/payments/', {
+            'amount': '15.00',
+            'reference': 'PAY-002',
+        }, format='json')
+        self.assertEqual(full_payment.status_code, 201)
+        dashboard = self.client.get(f'/api/customers/{self.customer.id}/dashboard/').data
+        self.assertEqual(dashboard['outstanding_balance'], '0.00')
+        self.assertEqual(dashboard['account_payments'], '20.00')
+        self.assertEqual(dashboard['sales'][0]['paid_amount'], '20.00')
+        self.assertEqual(dashboard['sales'][0]['remaining_balance'], '0.00')
+
+    def test_customer_payments_are_allocated_to_oldest_outstanding_sale_first(self):
+        create_account_sale = lambda: self.client.post('/api/sales/checkout/', {
+            'customer': self.customer.id,
+            'payment_method': 'account',
+            'items': [{'product': self.product.id, 'quantity': 1}],
+        }, format='json')
+        older_sale = create_account_sale()
+        newer_sale = create_account_sale()
+        self.assertEqual(older_sale.status_code, 201)
+        self.assertEqual(newer_sale.status_code, 201)
+
+        payment = self.client.post(f'/api/customers/{self.customer.id}/payments/', {
+            'amount': '15.00',
+            'reference': 'PAY-FIFO',
+        }, format='json')
+
+        self.assertEqual(payment.status_code, 201)
+        self.assertEqual(len(payment.data['ledger_entries']), 2)
+        dashboard = self.client.get(f'/api/customers/{self.customer.id}/dashboard/').data
+        sales_by_reference = {sale['receipt_number']: sale for sale in dashboard['sales']}
+        self.assertEqual(sales_by_reference[older_sale.data['receipt_number']]['paid_amount'], '10.00')
+        self.assertEqual(sales_by_reference[older_sale.data['receipt_number']]['remaining_balance'], '0.00')
+        self.assertEqual(sales_by_reference[newer_sale.data['receipt_number']]['paid_amount'], '5.00')
+        self.assertEqual(sales_by_reference[newer_sale.data['receipt_number']]['remaining_balance'], '5.00')
+
+    def test_customer_payment_can_be_confirmed_against_a_specific_sale(self):
+        create_account_sale = lambda: self.client.post('/api/sales/checkout/', {
+            'customer': self.customer.id,
+            'payment_method': 'account',
+            'items': [{'product': self.product.id, 'quantity': 1}],
+        }, format='json')
+        older_sale = create_account_sale()
+        selected_sale = create_account_sale()
+        self.assertEqual(older_sale.status_code, 201)
+        self.assertEqual(selected_sale.status_code, 201)
+
+        payment = self.client.post(f'/api/customers/{self.customer.id}/payments/', {
+            'amount': '5.00',
+            'sale': selected_sale.data['id'],
+            'reference': 'PAY-INVOICE',
+        }, format='json')
+
+        self.assertEqual(payment.status_code, 201)
+        self.assertEqual(payment.data['ledger_entry']['sale_reference'], selected_sale.data['receipt_number'])
+        dashboard = self.client.get(f'/api/customers/{self.customer.id}/dashboard/').data
+        sales_by_reference = {sale['receipt_number']: sale for sale in dashboard['sales']}
+        self.assertEqual(sales_by_reference[older_sale.data['receipt_number']]['paid_amount'], '0.00')
+        self.assertEqual(sales_by_reference[older_sale.data['receipt_number']]['remaining_balance'], '10.00')
+        self.assertEqual(sales_by_reference[selected_sale.data['receipt_number']]['paid_amount'], '5.00')
+        self.assertEqual(sales_by_reference[selected_sale.data['receipt_number']]['remaining_balance'], '5.00')
+
+        wrong_customer_sale = Sale.objects.create(
+            receipt_number='OTHER-CUSTOMER-SALE',
+            customer=Customer.objects.create(customer_code='CUST-OTHER', name='Other customer'),
+            customer_name='Other customer',
+            payment_method=Sale.PaymentMethod.ACCOUNT,
+            subtotal='10.00',
+            discount_amount='0.00',
+            tax_rate='0.00',
+            tax_amount='0.00',
+            total='10.00',
+        )
+        invalid_payment = self.client.post(f'/api/customers/{self.customer.id}/payments/', {
+            'amount': '1.00',
+            'sale': wrong_customer_sale.id,
+        }, format='json')
+        self.assertEqual(invalid_payment.status_code, 400)
 
     def test_customer_credit_limit_rejects_sale_without_partial_changes(self):
         self.customer.credit_limit = Decimal('10.00')
@@ -873,6 +1057,7 @@ class ExpenseDashboardTests(AdminAPITestCase):
 
         self.assertEqual(report['operating_expenses'], '40.00')
         self.assertEqual(report['net_profit'], '-40.00')
+        self.assertEqual(report['daily_series'][-1]['net_profit'], -40.0)
 
 
 class DashboardAccountTests(APITestCase):
