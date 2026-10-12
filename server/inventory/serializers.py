@@ -88,7 +88,7 @@ class ProductSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Product
-        fields = ['id', 'sku', 'name', 'category', 'category_name', 'supplier', 'supplier_name', 'quantity', 'reorder_level', 'unit_price', 'cost_price', 'location', 'updated_at', 'created_at']
+        fields = ['id', 'sku', 'name', 'category', 'category_name', 'supplier', 'supplier_name', 'quantity', 'reorder_level', 'is_active', 'unit_price', 'cost_price', 'location', 'updated_at', 'created_at']
         read_only_fields = ['id', 'updated_at', 'created_at']
 
 
@@ -142,6 +142,7 @@ class StockAdjustmentSerializer(serializers.Serializer):
 
 
 class PurchaseItemSerializer(serializers.ModelSerializer):
+    product = serializers.PrimaryKeyRelatedField(queryset=Product.objects.filter(is_active=True))
     product_name = serializers.CharField(source='product.name', read_only=True)
     product_sku = serializers.CharField(source='product.sku', read_only=True)
     line_total = serializers.SerializerMethodField()
@@ -268,7 +269,7 @@ class SaleSerializer(serializers.ModelSerializer):
 
 
 class SaleCheckoutItemSerializer(serializers.Serializer):
-    product = serializers.PrimaryKeyRelatedField(queryset=Product.objects.all())
+    product = serializers.PrimaryKeyRelatedField(queryset=Product.objects.filter(is_active=True))
     quantity = serializers.IntegerField(min_value=1)
 
 

@@ -4,6 +4,7 @@ import App from './App';
 import './styles.css';
 import './dashboard.css';
 import './catalog.css';
+import './products.css';
 import './overview.css';
 import './overview-flow.css';
 import './inventory.css';

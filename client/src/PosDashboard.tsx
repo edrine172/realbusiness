@@ -74,7 +74,7 @@ export default function PosDashboard({ initialCustomerId, onOpenProducts, onOpen
   const categories = useMemo(() => [...new Set(products.map((product) => product.category_name).filter(Boolean))], [products]);
   const visibleProducts = useMemo(() => {
     const term = search.trim().toLowerCase();
-    return products.filter((product) => product.quantity > 0 && (activeCategory === 'All items' || product.category_name === activeCategory) && (!term || `${product.name} ${product.sku} ${product.category_name}`.toLowerCase().includes(term)));
+    return products.filter((product) => product.is_active && product.quantity > 0 && (activeCategory === 'All items' || product.category_name === activeCategory) && (!term || `${product.name} ${product.sku} ${product.category_name}`.toLowerCase().includes(term)));
   }, [products, activeCategory, search]);
   const subtotal = cart.reduce((sum, line) => sum + Number(line.product.unit_price) * line.quantity, 0);
   const discountAmount = Math.round(subtotal * discountPercent) / 100;

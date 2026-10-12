@@ -159,6 +159,7 @@ export interface Product {
   supplier_name: string;
   quantity: number;
   reorder_level: number;
+  is_active: boolean;
   unit_price: string;
   cost_price: string;
   location: string;
@@ -696,7 +697,7 @@ export const api = {
   },
   createProduct: (product: Pick<Product, 'name' | 'sku' | 'quantity' | 'reorder_level' | 'unit_price' | 'cost_price' | 'location'> & { category: number; supplier?: number | null }) =>
     request<Product>('/products/', { method: 'POST', body: JSON.stringify(product) }),
-  updateProduct: (id: number, product: Partial<Pick<Product, 'name' | 'sku' | 'category' | 'supplier' | 'quantity' | 'reorder_level' | 'unit_price' | 'cost_price' | 'location'>>) =>
+  updateProduct: (id: number, product: Partial<Pick<Product, 'name' | 'sku' | 'category' | 'supplier' | 'quantity' | 'reorder_level' | 'is_active' | 'unit_price' | 'cost_price' | 'location'>>) =>
     request<Product>(`/products/${id}/`, { method: 'PATCH', body: JSON.stringify(product) }),
   deleteProduct: (id: number) => request<void>(`/products/${id}/`, { method: 'DELETE' }),
   createMovement: (movement: Pick<StockMovement, 'product' | 'movement_type' | 'quantity' | 'note' | 'reference'>) =>

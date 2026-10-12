@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import {
   AlertTriangle, Barcode, Boxes, Check, ChevronDown, ChevronLeft,
   ChevronRight, CircleHelp, LayoutDashboard, ListFilter,
-  BriefcaseBusiness, LogOut, MoreHorizontal, Package, Plus, Printer, Search, Settings, SlidersHorizontal,
+  BriefcaseBusiness, LogOut, MoreHorizontal, Package, Plus, Power, Printer, Search, Settings, SlidersHorizontal,
   Tags, Trash2, Truck, Users, Warehouse, X,
 } from 'lucide-react';
 import { api, formatCurrency as currency, getCurrencyDisplay, setCurrencyDisplay, subscribeCurrencyDisplay, type AccessUser, type Category, type Product, type Supplier } from './api';
@@ -25,8 +25,9 @@ import HelpCenter from './HelpCenter';
 import AccountEntry from './AccountEntry';
 import LandingPage from './LandingPage';
 
-type ProductDraft = Omit<Product, 'id' | 'category_name' | 'supplier_name' | 'updated_at' | 'created_at'>;
+type ProductDraft = Omit<Product, 'id' | 'category_name' | 'supplier_name' | 'updated_at' | 'created_at' | 'is_active'>;
 type StatusFilter = 'All statuses' | 'In stock' | 'Low stock' | 'Out of stock';
+type AvailabilityFilter = 'All products' | 'Active' | 'Inactive';
 const PAGE_SIZE_OPTIONS = [10, 20, 50];
 const stockStatus = (product: Product): Exclude<StatusFilter, 'All statuses'> => product.quantity === 0 ? 'Out of stock' : product.quantity <= product.reorder_level ? 'Low stock' : 'In stock';
 const adminViews = new Set<NotificationDashboard>(['users', 'settings', 'staff']);
@@ -133,6 +134,7 @@ export default function ProductCatalog() {
   const [categoryFilter, setCategoryFilter] = useState('All categories');
   const [supplierFilter, setSupplierFilter] = useState('All suppliers');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('All statuses');
+  const [availabilityFilter, setAvailabilityFilter] = useState<AvailabilityFilter>('All products');
   const [sort, setSort] = useState('stock-asc');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
@@ -235,8 +237,8 @@ export default function ProductCatalog() {
   useEffect(() => {
     if (activeView === 'overview') void loadData();
   }, [activeView]);
-  useEffect(() => { setPage(1); }, [query, categoryFilter, supplierFilter, statusFilter, sort, pageSize]);
-  useEffect(() => { setSelected([]); }, [page, pageSize, query, categoryFilter, supplierFilter, statusFilter]);
+  useEffect(() => { setPage(1); }, [query, categoryFilter, supplierFilter, statusFilter, availabilityFilter, sort, pageSize]);
+  useEffect(() => { setSelected([]); }, [page, pageSize, query, categoryFilter, supplierFilter, statusFilter, availabilityFilter]);
 
   const filteredProducts = useMemo(() => {
     const term = query.trim().toLowerCase();
@@ -245,18 +247,20 @@ export default function ProductCatalog() {
       const matchesCategory = categoryFilter === 'All categories' || product.category_name === categoryFilter;
       const matchesSupplier = supplierFilter === 'All suppliers' || product.supplier_name === supplierFilter;
       const matchesStatus = statusFilter === 'All statuses' || stockStatus(product) === statusFilter;
-      return matchesQuery && matchesCategory && matchesSupplier && matchesStatus;
+      const matchesAvailability = availabilityFilter === 'All products' || (availabilityFilter === 'Active' ? product.is_active : !product.is_active);
+      return matchesQuery && matchesCategory && matchesSupplier && matchesStatus && matchesAvailability;
     }).sort((a, b) => {
       if (sort === 'stock-desc') return b.quantity - a.quantity || a.name.localeCompare(b.name);
       if (sort === 'name-asc') return a.name.localeCompare(b.name);
       if (sort === 'price-desc') return Number(b.cost_price) - Number(a.cost_price);
       return a.quantity - b.quantity || a.name.localeCompare(b.name);
     });
-  }, [products, query, categoryFilter, supplierFilter, statusFilter, sort]);
+  }, [products, query, categoryFilter, supplierFilter, statusFilter, availabilityFilter, sort]);
   const pageCount = Math.max(1, Math.ceil(filteredProducts.length / pageSize));
   const visibleProducts = filteredProducts.slice((page - 1) * pageSize, page * pageSize);
   const selectedOnPage = visibleProducts.length > 0 && visibleProducts.every((product) => selected.includes(product.id));
-  const inStockSkus = products.filter((product) => product.quantity > 0).length;
+  const activeProductsCount = products.filter((product) => product.is_active).length;
+  const inStockSkus = products.filter((product) => product.is_active && product.quantity > 0).length;
   const totalCostValue = products.reduce((sum, product) => sum + product.quantity * Number(product.cost_price), 0);
   const lowStockCount = products.filter((product) => product.quantity > 0 && product.quantity <= product.reorder_level).length;
   const depletedCount = products.filter((product) => product.quantity === 0).length;
@@ -266,7 +270,7 @@ export default function ProductCatalog() {
     setSelected((current) => selectedOnPage ? current.filter((id) => !visibleProducts.some((product) => product.id === id)) : [...new Set([...current, ...visibleProducts.map((product) => product.id)])]);
   }
   function productExportRows(): unknown[][] {
-    return [['SKU', 'Product', 'Category', 'Supplier', 'Quantity', 'Reorder level', 'Cost price', 'Unit price', 'Location'], ...filteredProducts.map((product) => [product.sku, product.name, product.category_name, product.supplier_name, product.quantity, product.reorder_level, product.cost_price, product.unit_price, product.location])];
+    return [['SKU', 'Product', 'Active', 'Category', 'Supplier', 'Quantity', 'Reorder level', 'Cost price', 'Unit price', 'Location'], ...filteredProducts.map((product) => [product.sku, product.name, product.is_active ? 'Yes' : 'No', product.category_name, product.supplier_name, product.quantity, product.reorder_level, product.cost_price, product.unit_price, product.location])];
   }
   function exportCsv() {
     const rows = productExportRows();
@@ -296,6 +300,23 @@ export default function ProductCatalog() {
     if (!selected.length || !window.confirm(`Permanently delete ${selected.length} selected product${selected.length === 1 ? '' : 's'}?`)) return;
     try { await Promise.all(selected.map((id) => api.deleteProduct(id))); await loadData(); setSelected([]); notify('Selected products deleted.'); }
     catch (cause) { notify(cause instanceof Error ? cause.message : 'Could not delete selected products.'); }
+  }
+  async function setProductsActive(ids: number[], isActive: boolean) {
+    if (!ids.length) return;
+    try {
+      await Promise.all(ids.map((id) => api.updateProduct(id, { is_active: isActive })));
+      await loadData();
+      setSelected([]);
+      notify(`${ids.length === 1 ? 'Product' : `${ids.length} products`} ${isActive ? 'activated' : 'deactivated'}.`);
+    } catch (cause) { notify(cause instanceof Error ? cause.message : 'Could not update product availability.'); }
+  }
+  async function deleteProduct(product: Product) {
+    if (!window.confirm(`Permanently delete ${product.name} (${product.sku})? Products with sales or inventory history should be deactivated instead.`)) return;
+    try {
+      await api.deleteProduct(product.id);
+      await loadData();
+      notify(`${product.name} deleted.`);
+    } catch (cause) { notify(cause instanceof Error ? cause.message : 'Could not delete this product.'); }
   }
   async function importProducts(file?: File) {
     if (!file) return;
@@ -367,10 +388,10 @@ export default function ProductCatalog() {
       {mountedDashboards.has('users') && <DashboardPanel active={activeView === 'users'}><UsersDashboard onSignOut={signOut}/></DashboardPanel>}
       {(mountedDashboards.has('reports') || mountedDashboards.has('sales')) && <DashboardPanel active={activeView === 'reports' || activeView === 'sales'}><ReportsDashboard onOpenInventory={() => setActiveView('inventory')} onOpenPurchases={() => setActiveView('purchases')} onOpenPOS={() => setActiveView('pos')} onOpenExpenses={() => setActiveView('expenses')}/></DashboardPanel>}
       {mountedDashboards.has('products') && <DashboardPanel active={activeView === 'products'}><>
-      <section className="catalog-heading"><div><div className="catalog-breadcrumb">Inventory <span>›</span> <b>Products Catalog</b></div><h1>Products Catalog</h1><p>Manage all product catalogs, pricing, SKU attributes, and supplier procurement links.</p></div><div className="catalog-heading-actions"><button className="catalog-button catalog-button-light" onClick={() => printLabels(products.filter((product) => selected.includes(product.id)))}><Printer size={14}/>Print Barcodes</button><FileActionMenu label="Import" direction="import" options={[{ label: 'CSV file', onSelect: () => chooseProductImport('.csv,text/csv') }, { label: 'Excel workbook', onSelect: () => chooseProductImport('.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel') }]}/><input ref={importRef} className="catalog-hidden" type="file" onChange={(event) => void importProducts(event.target.files?.[0])}/><FileActionMenu label="Export" direction="export" options={[{ label: 'CSV file', onSelect: exportCsv }, { label: 'Excel workbook', onSelect: () => void exportXlsx() }]}/><button className="catalog-button catalog-button-primary" onClick={() => setModalProduct(null)}><Plus size={15}/>Add Product</button></div></section>
+      <section className="catalog-heading"><div><div className="catalog-breadcrumb">Inventory <span>›</span> <b>Products Catalog</b></div><h1>Products Catalog</h1><p>Deactivate products to remove them from sales while preserving history; permanently delete only unused products.</p></div><div className="catalog-heading-actions"><button className="catalog-button catalog-button-light" onClick={() => printLabels(products.filter((product) => selected.includes(product.id)))}><Printer size={14}/>Print Barcodes</button><FileActionMenu label="Import" direction="import" options={[{ label: 'CSV file', onSelect: () => chooseProductImport('.csv,text/csv') }, { label: 'Excel workbook', onSelect: () => chooseProductImport('.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel') }]}/><input ref={importRef} className="catalog-hidden" type="file" onChange={(event) => void importProducts(event.target.files?.[0])}/><FileActionMenu label="Export" direction="export" options={[{ label: 'CSV file', onSelect: exportCsv }, { label: 'Excel workbook', onSelect: () => void exportXlsx() }]}/><button className="catalog-button catalog-button-primary" onClick={() => setModalProduct(null)}><Plus size={15}/>Add Product</button></div></section>
       <section className="catalog-metrics" aria-label="Product catalog metrics">
         <article className="catalog-metric"><span>CATALOG ASSET VALUE</span><strong>{currency(totalCostValue)}</strong><small className="metric-positive"><Check size={12}/> At cost across all products</small><i className="metric-icon blue"><Barcode size={16}/></i></article>
-        <article className="catalog-metric"><span>IN STOCK SKUS</span><strong>{inStockSkus.toLocaleString()}</strong><small className="metric-positive"><Check size={12}/> {products.length.toLocaleString()} active catalog items</small><i className="metric-icon green"><Check size={16}/></i></article>
+        <article className="catalog-metric"><span>IN STOCK SKUS</span><strong>{inStockSkus.toLocaleString()}</strong><small className="metric-positive"><Check size={12}/> {activeProductsCount.toLocaleString()} active catalog items</small><i className="metric-icon green"><Check size={16}/></i></article>
         <article className="catalog-metric"><span>LOW STOCK THRESHOLD</span><strong>{lowStockCount.toLocaleString()}</strong><small><AlertTriangle size={12}/> Action required</small><i className="metric-icon indigo"><AlertTriangle size={16}/></i></article>
         <article className="catalog-metric depleted"><span>DEPLETED / STOCKOUT</span><strong>{depletedCount.toLocaleString()}</strong><small><i/> Stock unavailable</small><i className="metric-icon red"><X size={16}/></i></article>
       </section>
@@ -379,17 +400,18 @@ export default function ProductCatalog() {
           <label className="catalog-select"><select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}><option>All categories</option>{categories.map((category) => <option key={category.id}>{category.name}</option>)}</select><ChevronDown size={13}/></label>
           <label className="catalog-select"><select value={supplierFilter} onChange={(event) => setSupplierFilter(event.target.value)}><option>All suppliers</option>{suppliers.map((supplier) => <option key={supplier.id}>{supplier.name}</option>)}</select><ChevronDown size={13}/></label>
           <label className="catalog-select"><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}><option>All statuses</option><option>In stock</option><option>Low stock</option><option>Out of stock</option></select><ChevronDown size={13}/></label>
+          <label className="catalog-select"><select aria-label="Filter products by availability" value={availabilityFilter} onChange={(event) => setAvailabilityFilter(event.target.value as AvailabilityFilter)}><option>All products</option><option>Active</option><option>Inactive</option></select><ChevronDown size={13}/></label>
         </div>
-        <div className="catalog-filter-bottom"><label className="catalog-sort"><SlidersHorizontal size={13}/><span>Sort:</span><select value={sort} onChange={(event) => setSort(event.target.value)}><option value="stock-asc">Stock (Low to High)</option><option value="stock-desc">Stock (High to Low)</option><option value="name-asc">Product name (A to Z)</option><option value="price-desc">Cost (High to Low)</option></select><ChevronDown size={12}/></label><button className="catalog-clear" onClick={() => { setCategoryFilter('All categories'); setSupplierFilter('All suppliers'); setStatusFilter('All statuses'); setSort('stock-asc'); setQuery(''); }}>Clear filters</button></div>
+        <div className="catalog-filter-bottom"><label className="catalog-sort"><SlidersHorizontal size={13}/><span>Sort:</span><select value={sort} onChange={(event) => setSort(event.target.value)}><option value="stock-asc">Stock (Low to High)</option><option value="stock-desc">Stock (High to Low)</option><option value="name-asc">Product name (A to Z)</option><option value="price-desc">Cost (High to Low)</option></select><ChevronDown size={12}/></label><button className="catalog-clear" onClick={() => { setCategoryFilter('All categories'); setSupplierFilter('All suppliers'); setStatusFilter('All statuses'); setAvailabilityFilter('All products'); setSort('stock-asc'); setQuery(''); }}>Clear filters</button></div>
       </section>
-      {selected.length > 0 && <section className="catalog-bulk-bar"><span className="catalog-selected-dot"/>{selected.length} {selected.length === 1 ? 'item' : 'items'} selected <span className="catalog-bulk-sku">{products.find((product) => product.id === selected[0])?.sku}</span><div className="catalog-bulk-actions"><label className="catalog-bulk-select"><select value={bulkCategory} onChange={(event) => setBulkCategory(event.target.value)}><option value="">Update Category</option>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select><ChevronDown size={12}/></label><button onClick={() => void updateSelectedCategory()} disabled={!bulkCategory}><Tags size={13}/>Apply</button><button onClick={() => printLabels(products.filter((product) => selected.includes(product.id)))}><Printer size={13}/>Print Labels</button><button className="danger" onClick={() => void deleteSelected()}><Trash2 size={13}/>Delete</button><button className="catalog-clear" onClick={() => setSelected([])}>Deselect All</button></div></section>}
+      {selected.length > 0 && <section className="catalog-bulk-bar"><span className="catalog-selected-dot"/>{selected.length} {selected.length === 1 ? 'item' : 'items'} selected <span className="catalog-bulk-sku">{products.find((product) => product.id === selected[0])?.sku}</span><div className="catalog-bulk-actions"><label className="catalog-bulk-select"><select value={bulkCategory} onChange={(event) => setBulkCategory(event.target.value)}><option value="">Update Category</option>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select><ChevronDown size={12}/></label><button onClick={() => void updateSelectedCategory()} disabled={!bulkCategory}><Tags size={13}/>Apply</button><button onClick={() => printLabels(products.filter((product) => selected.includes(product.id)))}><Printer size={13}/>Print Labels</button><button onClick={() => void setProductsActive(selected, true)}><Power size={13}/>Activate</button><button onClick={() => void setProductsActive(selected, false)}><Power size={13}/>Deactivate</button><button className="danger" onClick={() => void deleteSelected()}><Trash2 size={13}/>Delete</button><button className="catalog-clear" onClick={() => setSelected([])}>Deselect All</button></div></section>}
       <section className="catalog-table-panel">
         <div className="catalog-table-scroll"><table className="catalog-table"><thead><tr><th className="catalog-check-cell"><input type="checkbox" aria-label="Select current page" checked={selectedOnPage} onChange={togglePageSelection}/></th><th>PRODUCT / CATEGORY</th><th>SKU &amp; BARCODE</th><th>CATEGORY</th><th>SUPPLIER</th><th>COST PRICE</th><th>ON HAND</th><th>STATUS</th><th aria-label="Actions"/></tr></thead><tbody>
           {loading && <tr><td colSpan={9} className="catalog-state">Loading products from inventory API…</td></tr>}
           {!loading && loadError && <tr><td colSpan={9} className="catalog-state catalog-error-state"><strong>Could not connect to inventory</strong><span>{loadError}</span><button className="catalog-button catalog-button-light" onClick={() => void loadData()}>Retry connection</button></td></tr>}
           {!loading && !loadError && visibleProducts.map((product) => {
             const status = stockStatus(product);
-            return <tr key={product.id}><td className="catalog-check-cell"><input type="checkbox" aria-label={`Select ${product.name}`} checked={selected.includes(product.id)} onChange={() => setSelected((current) => current.includes(product.id) ? current.filter((id) => id !== product.id) : [...current, product.id])}/></td><td><div className="catalog-product-cell"><span className="catalog-product-thumb"><Package size={17}/></span><span><strong>{product.name}</strong><small>{product.category_name || 'Uncategorized'}</small></span></div></td><td><span className="catalog-sku">{product.sku}</span><small className="catalog-barcode"><Barcode size={12}/>{product.sku.replace(/\D/g, '').slice(0, 12) || product.sku}</small></td><td><span className="catalog-category-chip">{product.category_name}</span></td><td>{product.supplier_name || <span className="catalog-muted">—</span>}</td><td>{currency(product.cost_price)}</td><td><strong className={`catalog-quantity ${status === 'Out of stock' ? 'is-out' : status === 'Low stock' ? 'is-low' : ''}`}>{product.quantity.toLocaleString()}</strong><small className="catalog-reorder">Min. {product.reorder_level}</small></td><td><span className={`catalog-status ${status.toLowerCase().replace(/ /g, '-')}`}>{status}</span></td><td><button className="catalog-row-action" aria-label={`Edit ${product.name}`} onClick={() => setModalProduct(product)}><MoreHorizontal size={17}/></button></td></tr>;
+            return <tr key={product.id} className={!product.is_active ? 'product-row-inactive' : ''}><td className="catalog-check-cell"><input type="checkbox" aria-label={`Select ${product.name}`} checked={selected.includes(product.id)} onChange={() => setSelected((current) => current.includes(product.id) ? current.filter((id) => id !== product.id) : [...current, product.id])}/></td><td><div className="catalog-product-cell"><span className="catalog-product-thumb"><Package size={17}/></span><span><strong>{product.name}</strong><small>{product.category_name || 'Uncategorized'}</small></span></div></td><td><span className="catalog-sku">{product.sku}</span><small className="catalog-barcode"><Barcode size={12}/>{product.sku.replace(/\D/g, '').slice(0, 12) || product.sku}</small></td><td><span className="catalog-category-chip">{product.category_name}</span></td><td>{product.supplier_name || <span className="catalog-muted">—</span>}</td><td>{currency(product.cost_price)}</td><td><strong className={`catalog-quantity ${status === 'Out of stock' ? 'is-out' : status === 'Low stock' ? 'is-low' : ''}`}>{product.quantity.toLocaleString()}</strong><small className="catalog-reorder">Min. {product.reorder_level}</small></td><td><span className={`catalog-status ${product.is_active ? status.toLowerCase().replace(/ /g, '-') : 'inactive'}`}>{product.is_active ? status : 'Inactive'}</span></td><td><div className="catalog-product-actions"><button className="catalog-row-action" aria-label={`Edit ${product.name}`} onClick={() => setModalProduct(product)}><MoreHorizontal size={17}/></button><button className="catalog-row-action" aria-label={`${product.is_active ? 'Deactivate' : 'Activate'} ${product.name}`} title={`${product.is_active ? 'Deactivate' : 'Activate'} product`} onClick={() => void setProductsActive([product.id], !product.is_active)}><Power size={15}/></button><button className="catalog-row-action danger" aria-label={`Delete ${product.name}`} title="Delete product" onClick={() => void deleteProduct(product)}><Trash2 size={15}/></button></div></td></tr>;
           })}
           {!loading && !loadError && visibleProducts.length === 0 && <tr><td colSpan={9} className="catalog-state">No products match these filters. Try a different search or add a product.</td></tr>}
         </tbody></table></div>

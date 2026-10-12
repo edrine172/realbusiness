@@ -403,7 +403,7 @@ def sync_notifications():
             notification.created_at = timezone.now()
         notification.save()
 
-    for product in Product.objects.select_related('supplier').filter(Q(quantity=0) | Q(quantity__lte=F('reorder_level'))):
+    for product in Product.objects.select_related('supplier').filter(is_active=True).filter(Q(quantity=0) | Q(quantity__lte=F('reorder_level'))):
         if product.quantity == 0:
             state = 'depleted'
             severity = Notification.Severity.CRITICAL
@@ -772,7 +772,12 @@ class ProductViewSet(viewsets.ModelViewSet):
         category = self.request.query_params.get('category')
         supplier = self.request.query_params.get('supplier')
         status = self.request.query_params.get('stock_status')
+        active = self.request.query_params.get('active')
 
+        if active == 'true':
+            queryset = queryset.filter(is_active=True)
+        elif active == 'false':
+            queryset = queryset.filter(is_active=False)
         if category and category.isdigit():
             queryset = queryset.filter(category_id=category)
         if supplier == 'none':
@@ -786,6 +791,20 @@ class ProductViewSet(viewsets.ModelViewSet):
         elif status == 'out_of_stock':
             queryset = queryset.filter(quantity=0)
         return queryset
+
+    def destroy(self, request, *args, **kwargs):
+        product = self.get_object()
+        has_history = (
+            product.sale_items.exists()
+            or product.purchase_items.exists()
+            or product.movements.exists()
+        )
+        if has_history:
+            return Response(
+                {'detail': 'This product is linked to sales, purchases, or inventory movements. Deactivate it instead to preserve its history.'},
+                status=409,
+            )
+        return super().destroy(request, *args, **kwargs)
 
 
 class StockMovementViewSet(viewsets.ModelViewSet):
@@ -947,7 +966,7 @@ def checkout(request):
     products = {product.id: product for product in locked_products}
     for item in cart_items:
         product = products.get(item['product'].id)
-        if product is None:
+        if product is None or not product.is_active:
             raise ValidationError({'items': 'One or more products are no longer available.'})
         if product.quantity < item['quantity']:
             raise ValidationError({'items': f'Only {product.quantity} units of {product.sku} are in stock.'})

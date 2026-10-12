@@ -26,6 +26,102 @@ class AdminAPITestCase(APITestCase):
         self.client.force_authenticate(user=self.admin)
 
 
+class ProductAvailabilityTests(AdminAPITestCase):
+    def setUp(self):
+        super().setUp()
+        category = Category.objects.create(name='Product availability')
+        self.product = Product.objects.create(
+            sku='AVAIL-001',
+            name='Availability product',
+            category=category,
+            quantity=5,
+            reorder_level=1,
+            unit_price='12.00',
+            cost_price='7.00',
+        )
+
+    def test_products_can_be_deactivated_and_reactivated(self):
+        self.assertTrue(self.client.get('/api/products/').data[0]['is_active'])
+
+        deactivated = self.client.patch(
+            f'/api/products/{self.product.id}/',
+            {'is_active': False},
+            format='json',
+        )
+
+        self.assertEqual(deactivated.status_code, 200)
+        self.assertFalse(deactivated.data['is_active'])
+        self.assertEqual(self.client.get('/api/products/?active=true').data, [])
+        self.assertFalse(self.client.get('/api/products/?active=false').data[0]['is_active'])
+
+        reactivated = self.client.patch(
+            f'/api/products/{self.product.id}/',
+            {'is_active': True},
+            format='json',
+        )
+
+        self.assertEqual(reactivated.status_code, 200)
+        self.assertTrue(reactivated.data['is_active'])
+
+    def test_deactivated_products_cannot_be_sold(self):
+        self.product.is_active = False
+        self.product.save(update_fields=['is_active'])
+
+        response = self.client.post('/api/sales/checkout/', {
+            'payment_method': 'cash',
+            'items': [{'product': self.product.id, 'quantity': 1}],
+        }, format='json')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(Sale.objects.exists())
+
+    def test_deactivated_products_cannot_be_added_to_new_purchase_orders(self):
+        supplier = Supplier.objects.create(name='Availability supplier')
+        self.product.is_active = False
+        self.product.save(update_fields=['is_active'])
+
+        response = self.client.post('/api/purchases/', {
+            'supplier': supplier.id,
+            'items': [{'product': self.product.id, 'quantity': 2, 'unit_cost': '7.00'}],
+        }, format='json')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(Purchase.objects.exists())
+
+    def test_products_can_be_deleted_without_history_but_history_is_preserved(self):
+        unused = Product.objects.create(
+            sku='AVAIL-002',
+            name='Unused product',
+            category=self.product.category,
+            unit_price='1.00',
+        )
+        self.assertEqual(self.client.delete(f'/api/products/{unused.id}/').status_code, 204)
+
+        sale = Sale.objects.create(
+            receipt_number='SALE-AVAIL-001',
+            customer_name='Walk-in Customer',
+            payment_method=Sale.PaymentMethod.CASH,
+            subtotal='12.00',
+            total='12.00',
+        )
+        SaleItem.objects.create(
+            sale=sale,
+            product=self.product,
+            product_name=self.product.name,
+            product_sku=self.product.sku,
+            quantity=1,
+            unit_price='12.00',
+            unit_cost='7.00',
+        )
+
+        response = self.client.delete(f'/api/products/{self.product.id}/')
+
+        self.assertEqual(response.status_code, 409)
+        self.assertIn('Deactivate it instead', response.data['detail'])
+        self.assertTrue(Product.objects.filter(pk=self.product.id).exists())
+        self.assertTrue(SaleItem.objects.filter(product=self.product).exists())
+
+
 class NotificationTests(AdminAPITestCase):
     def setUp(self):
         super().setUp()
