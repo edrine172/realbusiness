@@ -1,10 +1,62 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowDownLeft, ArrowUpRight, Building2, Check, CreditCard, FileText, Mail, MapPin, Package, Phone, Plus, RefreshCw, Search, ShieldCheck, Truck, Users, Wallet, X } from 'lucide-react';
-import { api, formatCurrency as currency, type Supplier, type SupplierDashboardData } from './api';
+import { ArrowDownLeft, ArrowUpRight, Building2, Check, FileText, Mail, MapPin, Package, Phone, Plus, RefreshCw, Search, ShieldCheck, Truck, Users, Wallet, X } from 'lucide-react';
+import { api, formatCurrency as currency, type Purchase, type Supplier, type SupplierDashboardData } from './api';
+import './supplier-payments.css';
 
 type SupplierTab = 'orders' | 'ledger' | 'catalog';
 type SupplierDraft = Omit<Supplier, 'id' | 'supplier_code' | 'outstanding_balance' | 'lifetime_spend' | 'completed_orders' | 'on_time_delivery_rate' | 'created_at'>;
 const dateLabel = (value: string) => new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(value));
+
+function SupplierPurchasePaymentForm({ purchase, onClose, onSaved }: {
+  purchase: Purchase;
+  onClose: () => void;
+  onSaved: () => Promise<void>;
+}) {
+  const [amount, setAmount] = useState(purchase.remaining_balance);
+  const [reference, setReference] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const remaining = Number(purchase.remaining_balance);
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const paymentAmount = Number(amount);
+    if (!Number.isFinite(paymentAmount) || paymentAmount <= 0 || paymentAmount > remaining) {
+      setError(`Enter an amount greater than zero and no more than ${currency(purchase.remaining_balance)}.`);
+      return;
+    }
+    setSaving(true);
+    setError('');
+    try {
+      await api.payPurchase(purchase.id, { amount: paymentAmount.toFixed(2), reference: reference.trim() });
+      await onSaved();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not record this supplier payment.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return <div className="catalog-overlay" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+    <form className="catalog-modal purchase-payment-modal" onSubmit={(event) => void submit(event)}>
+      <div className="catalog-modal-heading"><div><span className="catalog-eyebrow">SUPPLIER PAYMENT</span><h2>Confirm payment</h2><p>Record how much the supplier received for {purchase.reference}.</p></div><button className="catalog-icon-button" type="button" onClick={onClose} aria-label="Close"><X size={18}/></button></div>
+      <div className="purchase-payment-summary">
+        <div><span>ORDER TOTAL</span><strong>{currency(purchase.total)}</strong></div>
+        <div><span>ALREADY PAID</span><strong>{currency(purchase.paid_amount)}</strong></div>
+        <div><span>REMAINING</span><strong>{currency(purchase.remaining_balance)}</strong></div>
+      </div>
+      <div className="purchase-payment-presets">
+        <button type="button" className="catalog-button catalog-button-light" onClick={() => setAmount((remaining / 2).toFixed(2))}>Half of remaining</button>
+        <button type="button" className="catalog-button catalog-button-light" onClick={() => setAmount(purchase.remaining_balance)}>Pay in full</button>
+      </div>
+      <label className="catalog-field">Amount received<input type="number" min="0.01" max={purchase.remaining_balance} step="0.01" required value={amount} onChange={(event) => setAmount(event.target.value)}/></label>
+      <label className="catalog-field">Payment reference <span className="purchase-payment-optional">(optional)</span><input maxLength={80} value={reference} onChange={(event) => setReference(event.target.value)} placeholder="Receipt, transfer, or transaction number"/></label>
+      <p className="purchase-payment-confirmation">Confirming records the payment against this order and updates the supplier balance.</p>
+      {error && <p className="catalog-form-error">{error}</p>}
+      <div className="catalog-modal-actions"><button type="button" className="catalog-button catalog-button-light" onClick={onClose}>Cancel</button><button className="catalog-button catalog-button-primary" disabled={saving}>{saving ? 'Recording…' : 'Confirm payment'}</button></div>
+    </form>
+  </div>;
+}
 
 function SupplierForm({ supplier, onClose, onSaved }: {
   supplier: Supplier | null;
@@ -63,41 +115,6 @@ function SupplierForm({ supplier, onClose, onSaved }: {
   </form></div>;
 }
 
-function SupplierPaymentForm({ supplier, onClose, onSaved }: {
-  supplier: Supplier;
-  onClose: () => void;
-  onSaved: () => Promise<void>;
-}) {
-  const [amount, setAmount] = useState('');
-  const [reference, setReference] = useState('');
-  const [note, setNote] = useState('Supplier payment issued');
-  const [error, setError] = useState('');
-  const [saving, setSaving] = useState(false);
-
-  async function submit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setSaving(true);
-    setError('');
-    try {
-      await api.paySupplier(supplier.id, { amount, reference: reference.trim(), note: note.trim() });
-      await onSaved();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not record this payment.');
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return <div className="catalog-overlay" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><form className="catalog-modal supplier-payment-modal" onSubmit={submit}>
-    <div className="catalog-modal-heading"><div><span className="catalog-eyebrow">ACCOUNTS PAYABLE</span><h2>Record supplier payment</h2><p>Outstanding balance: {currency(supplier.outstanding_balance)}</p></div><button className="catalog-icon-button" type="button" onClick={onClose} aria-label="Close"><X size={18}/></button></div>
-    <label className="catalog-field">Payment amount<input type="number" min="0.01" max={supplier.outstanding_balance} step="0.01" required value={amount} onChange={(event) => setAmount(event.target.value)}/></label>
-    <label className="catalog-field">Reference<input maxLength={80} value={reference} onChange={(event) => setReference(event.target.value)} placeholder="Wire, ACH, or remittance ID"/></label>
-    <label className="catalog-field">Note<input maxLength={240} value={note} onChange={(event) => setNote(event.target.value)}/></label>
-    {error && <p className="catalog-form-error">{error}</p>}
-    <div className="catalog-modal-actions"><button type="button" className="catalog-button catalog-button-light" onClick={onClose}>Cancel</button><button className="catalog-button catalog-button-primary" disabled={saving}>{saving ? 'Recording…' : 'Record payment'}</button></div>
-  </form></div>;
-}
-
 export default function SuppliersDashboard({ onOpenPurchases, onOpenInventory }: {
   onOpenPurchases: (supplierId: number) => void;
   onOpenInventory: () => void;
@@ -111,7 +128,7 @@ export default function SuppliersDashboard({ onOpenPurchases, onOpenInventory }:
   const [error, setError] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Supplier | null>(null);
-  const [showPayment, setShowPayment] = useState(false);
+  const [paymentPurchase, setPaymentPurchase] = useState<Purchase | null>(null);
   const [notice, setNotice] = useState('');
 
   async function loadSuppliers() {
@@ -163,10 +180,11 @@ export default function SuppliersDashboard({ onOpenPurchases, onOpenInventory }:
     setNotice(`${supplier.name} supplier record saved.`);
   }
 
-  async function recordPayment() {
-    setShowPayment(false);
+  async function recordPurchasePayment() {
+    const reference = paymentPurchase?.reference;
+    setPaymentPurchase(null);
     await loadSuppliers();
-    setNotice('Supplier payment recorded and payable balance updated.');
+    setNotice(`Payment recorded${reference ? ` for ${reference}` : ''}; supplier balance updated.`);
   }
 
   const activeSupplier = detail?.supplier;
@@ -186,11 +204,11 @@ export default function SuppliersDashboard({ onOpenPurchases, onOpenInventory }:
       {!loading && error && !detail && <section className="overview-state overview-error"><strong>Could not load supplier account</strong><span>{error}</span><button className="catalog-button catalog-button-light" onClick={() => void openSupplier(selectedId)}><RefreshCw size={14}/>Retry</button></section>}
       {detail && activeSupplier && <>
         <div className="supplier-breadcrumb"><button onClick={() => { setSelectedId(null); setDetail(null); setError(''); }}><Building2 size={12}/>Suppliers</button><span>›</span><strong>{activeSupplier.name}</strong><code>{activeSupplier.supplier_code}</code><span className="supplier-verified"><ShieldCheck size={11}/>ERP supplier record verified</span></div>
-        <section className="supplier-profile-hero"><div className="supplier-company-mark"><Building2 size={20}/></div><div className="supplier-profile-copy"><h1>{activeSupplier.name}</h1><div className="supplier-profile-meta"><span className={`supplier-status ${activeSupplier.is_active ? 'active' : ''}`}><i/>{activeSupplier.is_active ? 'Active' : 'Inactive'}</span><span>Primary preferred vendor</span>{activeSupplier.contract_number && <span><FileText size={11}/>{activeSupplier.contract_number}</span>}</div><p><Building2 size={12}/>{activeSupplier.sector || 'Industry not specified'}<span>·</span><span>ID: {activeSupplier.supplier_code}</span></p></div><div className="supplier-profile-actions"><button className="catalog-button catalog-button-primary" onClick={() => onOpenPurchases(activeSupplier.id)}><Truck size={14}/>Create purchase order</button>{Number(activeSupplier.outstanding_balance) > 0 && <button className="catalog-button catalog-button-light" onClick={() => setShowPayment(true)}><CreditCard size={14}/>Log payment</button>}<button className="catalog-button catalog-button-light" onClick={() => setEditing(activeSupplier)}>Edit supplier</button><button className="catalog-icon-button" onClick={onOpenInventory} aria-label="View inventory"><Package size={15}/></button></div></section>
+        <section className="supplier-profile-hero"><div className="supplier-company-mark"><Building2 size={20}/></div><div className="supplier-profile-copy"><h1>{activeSupplier.name}</h1><div className="supplier-profile-meta"><span className={`supplier-status ${activeSupplier.is_active ? 'active' : ''}`}><i/>{activeSupplier.is_active ? 'Active' : 'Inactive'}</span><span>Primary preferred vendor</span>{activeSupplier.contract_number && <span><FileText size={11}/>{activeSupplier.contract_number}</span>}</div><p><Building2 size={12}/>{activeSupplier.sector || 'Industry not specified'}<span>·</span><span>ID: {activeSupplier.supplier_code}</span></p></div><div className="supplier-profile-actions"><button className="catalog-button catalog-button-primary" onClick={() => onOpenPurchases(activeSupplier.id)}><Truck size={14}/>Create purchase order</button><button className="catalog-button catalog-button-light" onClick={() => setEditing(activeSupplier)}>Edit supplier</button><button className="catalog-icon-button" onClick={onOpenInventory} aria-label="View inventory"><Package size={15}/></button></div></section>
         <section className="overview-metrics supplier-detail-metrics"><article><span>PROCUREMENT SPEND YTD</span><strong>{currency(detail.lifetime_spend)}</strong><small><Truck size={13}/> {detail.received_orders} orders received</small></article><article className="overview-alert-metric"><span>CURRENT AMOUNT DUE</span><strong>{currency(detail.outstanding_balance)}</strong><small><Wallet size={13}/> {activeSupplier.payment_terms}</small></article><article><span>ON-TIME DELIVERY RATE</span><strong>{activeSupplier.on_time_delivery_rate === null ? '—' : `${activeSupplier.on_time_delivery_rate}%`}</strong><small><Check size={13}/>{activeSupplier.on_time_delivery_rate === null ? 'Delivery dates not recorded' : `Lead time ${activeSupplier.lead_time_days} days`}</small></article><article><span>OPEN PURCHASE ORDERS</span><strong>{detail.purchase_orders.filter((purchase) => purchase.status === 'ordered').length.toLocaleString()}</strong><small><FileText size={13}/>{currency(detail.open_order_value)} committed</small></article></section>
         <div className="supplier-detail-layout"><aside className="supplier-info-column"><section className="overview-panel supplier-info-panel"><div className="supplier-panel-heading"><h2><Users size={14}/>Primary commercial contact</h2><button onClick={() => setEditing(activeSupplier)}>Edit</button></div><div className="supplier-info-manager"><span className="supplier-manager-avatar">{activeSupplier.account_manager ? activeSupplier.account_manager.slice(0, 1) : '—'}</span><span><small>ASSIGNED ACCOUNT MANAGER</small><strong>{activeSupplier.account_manager || 'Unassigned'}</strong></span></div><div className="supplier-info-list"><div><span><UserBadgeIcon/>Primary contact</span><strong>{activeSupplier.contact_name || '—'}</strong></div><div><span><Mail size={12}/>Direct invoicing &amp; PO email</span><strong>{activeSupplier.email || '—'}</strong></div><div><span><Phone size={12}/>Direct line / dispatch phone</span><strong>{activeSupplier.phone || '—'}</strong></div><div><span><MapPin size={12}/>Business address</span><strong>{activeSupplier.address || 'Not provided'}</strong></div></div><div className="supplier-tax-details"><div><small>TAX NUMBER</small><strong>{activeSupplier.tax_number || 'Not provided'}</strong></div><div><small>PAYMENT TERMS</small><strong>{activeSupplier.payment_terms}</strong></div></div></section><section className="overview-panel supplier-contract-panel"><div><span><FileText size={13}/>CONTRACT &amp; LEAD TIME</span><strong>{activeSupplier.contract_number || 'No contract reference'}</strong></div><small>Standard lead time · {activeSupplier.lead_time_days} business days</small></section></aside>
           <div className="supplier-detail-main"><section className="overview-panel supplier-records-panel"><div className="supplier-record-tabs" role="tablist" aria-label="Supplier records"><button className={tab === 'orders' ? 'active' : ''} onClick={() => setTab('orders')}><FileText size={13}/>Purchase orders <span>{detail.purchase_orders.length}</span></button><button className={tab === 'catalog' ? 'active' : ''} onClick={() => setTab('catalog')}><Package size={13}/>Supplied catalog <span>{detail.supplied_products.length}</span></button><button className={tab === 'ledger' ? 'active' : ''} onClick={() => setTab('ledger')}><Wallet size={13}/>Payment history <span>{detail.ledger_entries.length}</span></button></div>
-            {tab === 'orders' && <div className="supplier-record-table-wrap"><table className="catalog-table supplier-record-table"><thead><tr><th>PO NUMBER</th><th>ORDER DATE</th><th>EXPECTED / RECEIVED</th><th>ORDER COMPOSITION</th><th>AMOUNT</th><th>STATUS</th></tr></thead><tbody>{detail.purchase_orders.map((purchase) => <tr key={purchase.id}><td><strong className="supplier-order-ref">{purchase.reference}</strong></td><td>{dateLabel(purchase.ordered_at)}</td><td>{purchase.received_at ? dateLabel(purchase.received_at) : purchase.expected_delivery ? dateLabel(`${purchase.expected_delivery}T00:00:00`) : 'Not scheduled'}</td><td>{purchase.items.reduce((sum, item) => sum + item.quantity, 0)}× {purchase.items.slice(0, 2).map((item) => item.product_name).join(', ')}{purchase.items.length > 2 ? ` +${purchase.items.length - 2} more` : ''}</td><td><strong>{currency(purchase.total)}</strong></td><td><span className={`purchase-status ${purchase.status}`}>{purchase.status}</span></td></tr>)}{!detail.purchase_orders.length && <tr><td colSpan={6} className="catalog-state">No purchase orders for this supplier yet.</td></tr>}</tbody></table></div>}
+            {tab === 'orders' && <div className="supplier-record-table-wrap"><table className="catalog-table supplier-record-table supplier-payment-table"><thead><tr><th>PO NUMBER</th><th>ORDER DATE</th><th>EXPECTED / RECEIVED</th><th>ORDER COMPOSITION</th><th>ORDER TOTAL</th><th>AMOUNT PAID</th><th>REMAINING</th><th>PAYMENT STATUS</th><th>ORDER STATUS</th><th>PAYMENT ACTION</th></tr></thead><tbody>{detail.purchase_orders.map((purchase) => <tr key={purchase.id}><td><strong className="supplier-order-ref">{purchase.reference}</strong></td><td>{dateLabel(purchase.ordered_at)}</td><td>{purchase.received_at ? dateLabel(purchase.received_at) : purchase.expected_delivery ? dateLabel(`${purchase.expected_delivery}T00:00:00`) : 'Not scheduled'}</td><td>{purchase.items.reduce((sum, item) => sum + item.quantity, 0)}× {purchase.items.slice(0, 2).map((item) => item.product_name).join(', ')}{purchase.items.length > 2 ? ` +${purchase.items.length - 2} more` : ''}</td><td><strong>{currency(purchase.total)}</strong></td><td><strong>{currency(purchase.paid_amount)}</strong></td><td className={Number(purchase.remaining_balance) > 0 && purchase.status === 'received' ? 'supplier-balance-due' : ''}><strong>{currency(purchase.remaining_balance)}</strong></td><td><span className={`purchase-payment-status ${purchase.payment_status}`}>{purchase.payment_status === 'not_due' ? 'Not due' : purchase.payment_status}</span></td><td><span className={`purchase-status ${purchase.status}`}>{purchase.status}</span></td><td>{purchase.status === 'received' && Number(purchase.remaining_balance) > 0 ? <button className="catalog-button catalog-button-light purchase-receive-button" onClick={() => setPaymentPurchase(purchase)}>Confirm payment</button> : <span className="catalog-muted">{purchase.payment_status === 'paid' ? 'Paid in full' : '—'}</span>}</td></tr>)}{!detail.purchase_orders.length && <tr><td colSpan={10} className="catalog-state">No purchase orders for this supplier yet.</td></tr>}</tbody></table></div>}
             {tab === 'catalog' && <div className="supplier-catalog-grid">{detail.supplied_products.map((product) => <article key={product.id}><span className="supplier-product-sku">SKU: {product.sku}</span><strong>{product.name}</strong><small>{product.category_name} · {product.quantity} in stock</small><div><span>Unit cost</span><b>{currency(product.cost_price)}</b></div><div><span>Lead time</span><b>{activeSupplier.lead_time_days} days</b></div><button onClick={onOpenInventory}><Package size={12}/>View inventory</button></article>)}{!detail.supplied_products.length && <p className="catalog-state">No products are currently linked to this supplier.</p>}</div>}
             {tab === 'ledger' && <div className="supplier-record-table-wrap"><table className="catalog-table supplier-record-table"><thead><tr><th>ACTIVITY</th><th>DATE</th><th>REFERENCE</th><th>NOTE</th><th>AMOUNT</th></tr></thead><tbody>{detail.ledger_entries.map((entry) => <tr key={entry.id}><td><span className={`supplier-ledger-icon ${entry.entry_type}`}>{entry.entry_type === 'payment' ? <ArrowDownLeft size={13}/> : <ArrowUpRight size={13}/>}</span>{entry.entry_type_display}</td><td>{dateLabel(entry.created_at)}</td><td>{entry.reference || entry.purchase_reference || '—'}</td><td>{entry.note || '—'}</td><td className={entry.entry_type === 'payment' || entry.entry_type === 'credit' ? 'supplier-credit-amount' : ''}>{entry.entry_type === 'payment' || entry.entry_type === 'credit' ? '−' : '+'}{currency(entry.amount)}</td></tr>)}{!detail.ledger_entries.length && <tr><td colSpan={5} className="catalog-state">No payable activity recorded yet.</td></tr>}</tbody></table></div>}
           </section><section className="overview-panel supplier-activity-panel"><div className="overview-panel-heading"><div><span>RECENT PROCUREMENT</span><h2>Latest supplier activity</h2></div><button className="overview-text-action" onClick={() => onOpenPurchases(activeSupplier.id)}>All purchases →</button></div>{detail.ledger_entries.slice(0, 4).map((entry) => <div className="supplier-activity-row" key={entry.id}><span className={`supplier-activity-dot ${entry.entry_type}`}/><span><strong>{entry.entry_type_display}{entry.purchase_reference ? ` · ${entry.purchase_reference}` : ''}</strong><small>{entry.note || entry.reference || 'Supplier account activity'}</small></span><time>{dateLabel(entry.created_at)}</time></div>)}{!detail.ledger_entries.length && <p className="overview-empty">Purchase receipts and payments will appear here.</p>}</section></div>
@@ -199,7 +217,7 @@ export default function SuppliersDashboard({ onOpenPurchases, onOpenInventory }:
     </>}
     {notice && <div className="catalog-toast"><Check size={15}/>{notice}<button onClick={() => setNotice('')} aria-label="Dismiss"><X size={14}/></button></div>}
     {(showForm || editing) && <SupplierForm supplier={editing} onClose={() => { setShowForm(false); setEditing(null); }} onSaved={saveSupplier}/>}
-    {showPayment && activeSupplier && <SupplierPaymentForm supplier={activeSupplier} onClose={() => setShowPayment(false)} onSaved={recordPayment}/>}
+    {paymentPurchase && <SupplierPurchasePaymentForm purchase={paymentPurchase} onClose={() => setPaymentPurchase(null)} onSaved={recordPurchasePayment}/>}
   </>;
 }
 

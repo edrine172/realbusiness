@@ -282,6 +282,8 @@ export interface CustomerDashboardData {
   lifetime_revenue: string;
   completed_orders: number;
   outstanding_balance: string;
+  total_paid_amount: string;
+  total_remaining_balance: string;
   account_charges: string;
   account_payments: string;
   account_credits: string;
@@ -687,6 +689,9 @@ export const api = {
   summary: (range = '30d') => request<DashboardSummary>(`/dashboard/summary/?range=${range}`),
   products: () => request<Product[]>('/products/'),
   categories: () => request<Category[]>('/categories/'),
+  createCategory: (category: Pick<Category, 'name' | 'description'>) =>
+    request<Category>('/categories/', { method: 'POST', body: JSON.stringify(category) }),
+  deleteCategory: (id: number) => request<void>(`/categories/${id}/`, { method: 'DELETE' }),
   suppliers: () => request<Supplier[]>('/suppliers/'),
   movements: (days?: number, month?: string, date?: string) => {
     const params = new URLSearchParams();

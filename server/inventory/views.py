@@ -161,6 +161,12 @@ class CategoryViewSet(viewsets.ModelViewSet):
     queryset = Category.objects.all()
     serializer_class = CategorySerializer
 
+    def destroy(self, request, *args, **kwargs):
+        category = self.get_object()
+        if category.products.exists():
+            raise ValidationError({'detail': 'This category is assigned to products. Move those products to another category before deleting it.'})
+        return super().destroy(request, *args, **kwargs)
+
 
 class SupplierViewSet(viewsets.ModelViewSet):
     queryset = Supplier.objects.prefetch_related('purchases__items__product', 'ledger_entries').all()
@@ -250,6 +256,22 @@ class CustomerViewSet(viewsets.ModelViewSet):
         sales = list(customer.sales.prefetch_related('items', 'ledger_entries').all())
         lifetime_revenue = sum((sale.total for sale in sales), Decimal('0'))
         paid_by_sale, _ = self._sale_payment_allocations(customer, sales)
+        total_paid_amount = sum(
+            (
+                sale.total if sale.payment_method != Sale.PaymentMethod.ACCOUNT
+                else paid_by_sale.get(sale.id, Decimal('0'))
+                for sale in sales
+            ),
+            Decimal('0'),
+        )
+        total_remaining_balance = sum(
+            (
+                max(sale.total - paid_by_sale.get(sale.id, Decimal('0')), Decimal('0'))
+                for sale in sales
+                if sale.payment_method == Sale.PaymentMethod.ACCOUNT
+            ),
+            Decimal('0'),
+        )
         ledger_totals = customer.ledger_entries.values('entry_type').annotate(total=Sum('amount'))
         account_totals = {
             row['entry_type']: row['total'] or Decimal('0')
@@ -260,6 +282,8 @@ class CustomerViewSet(viewsets.ModelViewSet):
             'lifetime_revenue': str(lifetime_revenue.quantize(Decimal('0.01'))),
             'completed_orders': len(sales),
             'outstanding_balance': str(customer.outstanding_balance),
+            'total_paid_amount': str(total_paid_amount.quantize(Decimal('0.01'))),
+            'total_remaining_balance': str(total_remaining_balance.quantize(Decimal('0.01'))),
             'account_charges': str(account_totals.get(CustomerLedgerEntry.EntryType.CHARGE, Decimal('0')).quantize(Decimal('0.01'))),
             'account_payments': str(account_totals.get(CustomerLedgerEntry.EntryType.PAYMENT, Decimal('0')).quantize(Decimal('0.01'))),
             'account_credits': str(account_totals.get(CustomerLedgerEntry.EntryType.CREDIT, Decimal('0')).quantize(Decimal('0.01'))),

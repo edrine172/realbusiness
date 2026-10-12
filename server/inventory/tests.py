@@ -26,6 +26,36 @@ class AdminAPITestCase(APITestCase):
         self.client.force_authenticate(user=self.admin)
 
 
+class CategoryManagementTests(AdminAPITestCase):
+    def test_category_can_be_created_and_deleted_when_unused(self):
+        created = self.client.post('/api/categories/', {
+            'name': 'Office supplies',
+            'description': '',
+        }, format='json')
+
+        self.assertEqual(created.status_code, 201)
+        self.assertEqual(created.data['name'], 'Office supplies')
+
+        deleted = self.client.delete(f"/api/categories/{created.data['id']}/")
+        self.assertEqual(deleted.status_code, 204)
+        self.assertFalse(Category.objects.filter(name='Office supplies').exists())
+
+    def test_category_in_use_cannot_be_deleted(self):
+        category = Category.objects.create(name='Product category')
+        Product.objects.create(
+            sku='CAT-001',
+            name='Categorized product',
+            category=category,
+            unit_price='1.00',
+        )
+
+        response = self.client.delete(f'/api/categories/{category.id}/')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('assigned to products', response.data['detail'])
+        self.assertTrue(Category.objects.filter(pk=category.id).exists())
+
+
 class ProductAvailabilityTests(AdminAPITestCase):
     def setUp(self):
         super().setUp()
@@ -849,6 +879,8 @@ class CustomerAccountTests(AdminAPITestCase):
         self.assertEqual(dashboard['completed_orders'], 1)
         self.assertEqual(dashboard['lifetime_revenue'], '20.00')
         self.assertEqual(dashboard['outstanding_balance'], '15.00')
+        self.assertEqual(dashboard['total_paid_amount'], '5.00')
+        self.assertEqual(dashboard['total_remaining_balance'], '15.00')
         self.assertEqual(dashboard['account_charges'], '20.00')
         self.assertEqual(dashboard['account_payments'], '5.00')
         self.assertEqual(dashboard['account_credits'], '0.00')
@@ -867,9 +899,37 @@ class CustomerAccountTests(AdminAPITestCase):
         self.assertEqual(full_payment.status_code, 201)
         dashboard = self.client.get(f'/api/customers/{self.customer.id}/dashboard/').data
         self.assertEqual(dashboard['outstanding_balance'], '0.00')
+        self.assertEqual(dashboard['total_paid_amount'], '20.00')
+        self.assertEqual(dashboard['total_remaining_balance'], '0.00')
         self.assertEqual(dashboard['account_payments'], '20.00')
         self.assertEqual(dashboard['sales'][0]['paid_amount'], '20.00')
         self.assertEqual(dashboard['sales'][0]['remaining_balance'], '0.00')
+
+    def test_dashboard_payment_totals_include_immediate_and_partial_sales(self):
+        cash_sale = self.client.post('/api/sales/checkout/', {
+            'customer': self.customer.id,
+            'payment_method': 'cash',
+            'cash_tendered': '10.00',
+            'items': [{'product': self.product.id, 'quantity': 1}],
+        }, format='json')
+        account_sale = self.client.post('/api/sales/checkout/', {
+            'customer': self.customer.id,
+            'payment_method': 'account',
+            'items': [{'product': self.product.id, 'quantity': 2}],
+        }, format='json')
+        self.assertEqual(cash_sale.status_code, 201)
+        self.assertEqual(account_sale.status_code, 201)
+
+        payment = self.client.post(f'/api/customers/{self.customer.id}/payments/', {
+            'amount': '5.00',
+            'sale': account_sale.data['id'],
+        }, format='json')
+        self.assertEqual(payment.status_code, 201)
+
+        dashboard = self.client.get(f'/api/customers/{self.customer.id}/dashboard/').data
+        self.assertEqual(dashboard['lifetime_revenue'], '30.00')
+        self.assertEqual(dashboard['total_paid_amount'], '15.00')
+        self.assertEqual(dashboard['total_remaining_balance'], '15.00')
 
     def test_customer_payments_are_allocated_to_oldest_outstanding_sale_first(self):
         create_account_sale = lambda: self.client.post('/api/sales/checkout/', {

@@ -109,6 +109,58 @@ function ProductForm({ product, categories, suppliers, onClose, onSaved }: {
   </div>;
 }
 
+function CategoryManager({ categories, onClose, onChanged }: {
+  categories: Category[];
+  onClose: () => void;
+  onChanged: () => Promise<void>;
+}) {
+  const [name, setName] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [error, setError] = useState('');
+
+  async function createCategory(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const categoryName = name.trim();
+    if (!categoryName) return;
+    setSaving(true);
+    setError('');
+    try {
+      await api.createCategory({ name: categoryName, description: '' });
+      setName('');
+      await onChanged();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not create this category.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function deleteCategory(category: Category) {
+    if (!window.confirm(`Delete the "${category.name}" category?`)) return;
+    setDeletingId(category.id);
+    setError('');
+    try {
+      await api.deleteCategory(category.id);
+      await onChanged();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not delete this category.');
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
+  return <div className="catalog-overlay" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+    <section className="catalog-modal category-manager-modal" aria-labelledby="category-manager-title">
+      <div className="catalog-modal-heading"><div><span className="catalog-eyebrow">PRODUCT CATALOG</span><h2 id="category-manager-title">Manage categories</h2><p>Add categories or delete ones that are not assigned to products.</p></div><button className="catalog-icon-button" type="button" onClick={onClose} aria-label="Close"><X size={18}/></button></div>
+      <form className="category-manager-form" onSubmit={(event) => void createCategory(event)}><label className="catalog-field">Category name<input required maxLength={100} value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Office supplies"/></label><button className="catalog-button catalog-button-primary" disabled={saving}><Plus size={14}/>{saving ? 'Adding…' : 'Add category'}</button></form>
+      {error && <p className="catalog-form-error" role="alert">{error}</p>}
+      <div className="category-manager-list" aria-label="Product categories">{categories.map((category) => <div className="category-manager-row" key={category.id}><span>{category.name}</span><button className="catalog-row-action danger" type="button" title={`Delete ${category.name}`} aria-label={`Delete ${category.name}`} disabled={deletingId === category.id} onClick={() => void deleteCategory(category)}><Trash2 size={14}/></button></div>)}{categories.length === 0 && <p className="catalog-empty">No product categories yet.</p>}</div>
+      <div className="catalog-modal-actions"><button type="button" className="catalog-button catalog-button-light" onClick={onClose}>Done</button></div>
+    </section>
+  </div>;
+}
+
 export default function ProductCatalog() {
   const currencyDisplay = useSyncExternalStore(subscribeCurrencyDisplay, getCurrencyDisplay, getCurrencyDisplay);
   const [activeView, setActiveViewState] = useState<NotificationDashboard | 'home' | 'auth'>('home');
@@ -140,6 +192,7 @@ export default function ProductCatalog() {
   const [pageSize, setPageSize] = useState(10);
   const [selected, setSelected] = useState<number[]>([]);
   const [modalProduct, setModalProduct] = useState<Product | null | undefined>(undefined);
+  const [showCategoryManager, setShowCategoryManager] = useState(false);
   const [bulkCategory, setBulkCategory] = useState('');
   const [notice, setNotice] = useState('');
   const [helpOpen, setHelpOpen] = useState(false);
@@ -388,7 +441,7 @@ export default function ProductCatalog() {
       {mountedDashboards.has('users') && <DashboardPanel active={activeView === 'users'}><UsersDashboard onSignOut={signOut}/></DashboardPanel>}
       {(mountedDashboards.has('reports') || mountedDashboards.has('sales')) && <DashboardPanel active={activeView === 'reports' || activeView === 'sales'}><ReportsDashboard onOpenInventory={() => setActiveView('inventory')} onOpenPurchases={() => setActiveView('purchases')} onOpenPOS={() => setActiveView('pos')} onOpenExpenses={() => setActiveView('expenses')}/></DashboardPanel>}
       {mountedDashboards.has('products') && <DashboardPanel active={activeView === 'products'}><>
-      <section className="catalog-heading"><div><div className="catalog-breadcrumb">Inventory <span>›</span> <b>Products Catalog</b></div><h1>Products Catalog</h1><p>Deactivate products to remove them from sales while preserving history; permanently delete only unused products.</p></div><div className="catalog-heading-actions"><button className="catalog-button catalog-button-light" onClick={() => printLabels(products.filter((product) => selected.includes(product.id)))}><Printer size={14}/>Print Barcodes</button><FileActionMenu label="Import" direction="import" options={[{ label: 'CSV file', onSelect: () => chooseProductImport('.csv,text/csv') }, { label: 'Excel workbook', onSelect: () => chooseProductImport('.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel') }]}/><input ref={importRef} className="catalog-hidden" type="file" onChange={(event) => void importProducts(event.target.files?.[0])}/><FileActionMenu label="Export" direction="export" options={[{ label: 'CSV file', onSelect: exportCsv }, { label: 'Excel workbook', onSelect: () => void exportXlsx() }]}/><button className="catalog-button catalog-button-primary" onClick={() => setModalProduct(null)}><Plus size={15}/>Add Product</button></div></section>
+      <section className="catalog-heading"><div><div className="catalog-breadcrumb">Inventory <span>›</span> <b>Products Catalog</b></div><h1>Products Catalog</h1><p>Deactivate products to remove them from sales while preserving history; permanently delete only unused products.</p></div><div className="catalog-heading-actions"><button className="catalog-button catalog-button-light" onClick={() => setShowCategoryManager(true)}><Tags size={14}/>Manage Categories</button><button className="catalog-button catalog-button-light" onClick={() => printLabels(products.filter((product) => selected.includes(product.id)))}><Printer size={14}/>Print Barcodes</button><FileActionMenu label="Import" direction="import" options={[{ label: 'CSV file', onSelect: () => chooseProductImport('.csv,text/csv') }, { label: 'Excel workbook', onSelect: () => chooseProductImport('.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel') }]}/><input ref={importRef} className="catalog-hidden" type="file" onChange={(event) => void importProducts(event.target.files?.[0])}/><FileActionMenu label="Export" direction="export" options={[{ label: 'CSV file', onSelect: exportCsv }, { label: 'Excel workbook', onSelect: () => void exportXlsx() }]}/><button className="catalog-button catalog-button-primary" onClick={() => setModalProduct(null)}><Plus size={15}/>Add Product</button></div></section>
       <section className="catalog-metrics" aria-label="Product catalog metrics">
         <article className="catalog-metric"><span>CATALOG ASSET VALUE</span><strong>{currency(totalCostValue)}</strong><small className="metric-positive"><Check size={12}/> At cost across all products</small><i className="metric-icon blue"><Barcode size={16}/></i></article>
         <article className="catalog-metric"><span>IN STOCK SKUS</span><strong>{inStockSkus.toLocaleString()}</strong><small className="metric-positive"><Check size={12}/> {activeProductsCount.toLocaleString()} active catalog items</small><i className="metric-icon green"><Check size={16}/></i></article>
@@ -423,6 +476,7 @@ export default function ProductCatalog() {
     </main>
     {notice && <div className="catalog-toast"><Check size={15}/>{notice}<button onClick={() => setNotice('')} aria-label="Dismiss"><X size={14}/></button></div>}
     {modalProduct !== undefined && <ProductForm key={modalProduct?.id ?? 'new'} product={modalProduct} categories={categories} suppliers={suppliers} onClose={() => setModalProduct(undefined)} onSaved={async () => { setModalProduct(undefined); await loadData(); notify('Product saved to inventory.'); }}/ >}
+    {showCategoryManager && <CategoryManager categories={categories} onClose={() => setShowCategoryManager(false)} onChanged={loadData}/>}
     {helpOpen && <HelpCenter onClose={() => setHelpOpen(false)} onNavigate={(view) => { setActiveView(view); setHelpOpen(false); }}/ >}
   </div>;
 }
