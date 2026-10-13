@@ -2,9 +2,9 @@
   "name": "stockpulse-workspace",
   "private": true,
   "scripts": {
-    "start": "npm --prefix frontend run start --",
-    "dev": "npm --prefix frontend run dev --",
-    "build": "npm --prefix frontend run build",
+    "start": "npm --prefix client run start --",
+    "dev": "npm --prefix client run dev --",
+    "build": "npm --prefix client run build",
     "backend:check": "py backend/manage.py check",
     "backend:run": "py backend/manage.py runserver"
   }

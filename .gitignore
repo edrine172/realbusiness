@@ -5,6 +5,7 @@ __pycache__/
 venv/
 server/db.sqlite3
 *.sqlite3
+server/.env
 
 # Node
 node_modules/
