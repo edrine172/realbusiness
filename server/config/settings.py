@@ -6,7 +6,7 @@ import dj_database_url
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / '.env')
-DEBUG = os.environ.get('DEBUG', 'true').lower() in {'1', 'true', 'yes'}
+DEBUG = os.environ.get('DEBUG', 'false' if os.environ.get('RENDER') else 'true').lower() in {'1', 'true', 'yes'}
 SECRET_KEY = os.environ.get('SECRET_KEY')
 if not SECRET_KEY:
     if not DEBUG:
@@ -106,6 +106,10 @@ CORS_ALLOWED_ORIGINS = [
     'https://ssekanasystems.vercel.app',
 ]
 CORS_ALLOW_CREDENTIALS = True
+CSRF_COOKIE_SAMESITE = 'Lax' if DEBUG else 'None'
+CSRF_COOKIE_SECURE = not DEBUG
+SESSION_COOKIE_SAMESITE = 'Lax' if DEBUG else 'None'
+SESSION_COOKIE_SECURE = not DEBUG
 CSRF_TRUSTED_ORIGINS = [
     'http://localhost:5173',
     'http://127.0.0.1:5173',
