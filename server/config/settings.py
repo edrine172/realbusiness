@@ -3,12 +3,15 @@ import os
 from dotenv import load_dotenv
 from django.core.exceptions import ImproperlyConfigured
 import dj_database_url
-import os
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / '.env')
-SECRET_KEY = 'django-insecure-local-development-key-change-before-deployment'
-DEBUG = True
+DEBUG = os.environ.get('DEBUG', 'true').lower() in {'1', 'true', 'yes'}
+SECRET_KEY = os.environ.get('SECRET_KEY')
+if not SECRET_KEY:
+    if not DEBUG:
+        raise ImproperlyConfigured('SECRET_KEY must be set when DEBUG is disabled.')
+    SECRET_KEY = 'django-insecure-local-development-key-change-before-deployment'
 ALLOWED_HOSTS = [".onrender.com", '127.0.0.1', 'localhost']
 
 INSTALLED_APPS = [
@@ -26,7 +29,6 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
-    'corsheaders.middleware.CorsMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
