@@ -14,6 +14,8 @@
 .account-entry-node{display:flex;align-items:center;gap:5px;color:#8090a0;font-size:7px;font-weight:700}
 .account-entry-form-wrap h2,.account-entry-card h1{margin:11px 0 6px;color:#1d2b3b;font:800 22px/1.2 Manrope,sans-serif}
 .account-entry-intro{margin:0;color:#647487;font-size:9px;line-height:1.6}
+.account-entry-back-to-sign-in{display:inline-flex;align-items:center;gap:5px;margin-top:11px;padding:0;border:0;background:transparent;color:#235dd8;font-size:8px;font-weight:700}
+.account-entry-back-to-sign-in:hover{color:#1749b4;text-decoration:underline}
 .account-entry-tabs{display:grid;grid-template-columns:1fr 1fr;gap:3px;padding:3px;margin:19px 0 15px;border:1px solid #e2e8ee;border-radius:5px;background:#f0f3f7}
 .account-entry-tabs button{min-height:29px;border:0;border-radius:3px;background:transparent;color:#687789;font-size:8px;font-weight:700}
 .account-entry-tabs button.active{background:#fff;color:#1e3653;box-shadow:0 1px 4px #2434481a}
@@ -27,7 +29,7 @@
 .account-entry-submit{min-height:38px;margin-top:2px;display:flex;align-items:center;justify-content:center;gap:9px;border:0;border-radius:4px;background:#235dd8;color:#fff;font-size:9px;font-weight:700}
 .account-entry-submit:hover{background:#1749b4}
 .account-entry-submit:disabled{cursor:wait;opacity:.65}
-.account-entry-submit:focus-visible,.account-entry-tabs button:focus-visible,.account-entry-brand:focus-visible{outline:3px solid #235dd844;outline-offset:2px}
+.account-entry-submit:focus-visible,.account-entry-tabs button:focus-visible,.account-entry-brand:focus-visible,.account-entry-back-to-sign-in:focus-visible{outline:3px solid #235dd844;outline-offset:2px}
 .account-entry-status{padding:20px 0;color:#718094;font-size:10px}
 .account-entry-card-footer{display:flex;align-items:flex-start;gap:7px;padding-top:12px;margin-top:13px;border-top:1px solid #edf0f3;color:#6a7a8c;font-size:7px;line-height:1.5}
 .account-entry-card-footer svg{flex:none;color:#2b9673}

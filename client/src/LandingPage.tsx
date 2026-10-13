@@ -1,6 +1,8 @@
 import { ArrowDown, ArrowRight, Boxes, ChartNoAxesCombined, Package, ShieldCheck, Users } from 'lucide-react';
 
-export default function LandingPage({ onOpenDashboard }: { onOpenDashboard: () => void }) {
+type AccountMode = 'sign-in' | 'sign-up';
+
+export default function LandingPage({ onOpenAccount }: { onOpenAccount: (mode: AccountMode) => void }) {
   return <main className="landing-page" id="top">
     <header className="landing-header">
       <a className="landing-brand" href="#top" aria-label="StockPulse home">
@@ -11,7 +13,10 @@ export default function LandingPage({ onOpenDashboard }: { onOpenDashboard: () =
         <a href="#platform">Platform</a>
         <a href="#workflows">Workflows</a>
       </nav>
-      <button className="landing-header-action" onClick={onOpenDashboard}>Sign in / sign up <ArrowRight size={15}/></button>
+      <div className="landing-header-actions">
+        <button className="landing-header-sign-in" onClick={() => onOpenAccount('sign-in')}>Sign in</button>
+        <button className="landing-header-action" onClick={() => onOpenAccount('sign-up')}>Sign up <ArrowRight size={15}/></button>
+      </div>
     </header>
 
     <section className="landing-hero" aria-labelledby="landing-title">
@@ -23,7 +28,8 @@ export default function LandingPage({ onOpenDashboard }: { onOpenDashboard: () =
         <p className="landing-hero-copy">A clearer way to run inventory and the work around it.</p>
         <p className="landing-hero-detail">Bring products, purchasing, sales, staff, and payroll into one connected operating workspace.</p>
         <div className="landing-hero-actions">
-          <button className="landing-primary-action" onClick={onOpenDashboard}>Sign in to continue <ArrowRight size={16}/></button>
+          <button className="landing-primary-action" onClick={() => onOpenAccount('sign-in')}>Sign in <ArrowRight size={16}/></button>
+          <button className="landing-sign-up-action" onClick={() => onOpenAccount('sign-up')}>Sign up</button>
           <a className="landing-secondary-action" href="#platform">Explore the platform <ArrowDown size={15}/></a>
         </div>
         <div className="landing-hero-index"><span>BUILT FOR DAILY OPERATIONS</span><b>01 / 03</b></div>
@@ -61,7 +67,7 @@ export default function LandingPage({ onOpenDashboard }: { onOpenDashboard: () =
 
     <section className="landing-bottom-cta">
       <div><span><ShieldCheck size={15}/> STOCKPULSE WORKSPACE</span><h2>Bring the day into focus.</h2></div>
-      <button onClick={onOpenDashboard}>Enter StockPulse <ArrowRight size={16}/></button>
+      <button onClick={() => onOpenAccount('sign-in')}>Sign in to StockPulse <ArrowRight size={16}/></button>
     </section>
     <footer className="landing-footer"><span>StockPulse Operations</span><span>Inventory · Workforce · Finance</span></footer>
   </main>;

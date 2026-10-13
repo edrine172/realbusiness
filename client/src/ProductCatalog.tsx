@@ -164,6 +164,8 @@ function CategoryManager({ categories, onClose, onChanged }: {
 export default function ProductCatalog() {
   const currencyDisplay = useSyncExternalStore(subscribeCurrencyDisplay, getCurrencyDisplay, getCurrencyDisplay);
   const [activeView, setActiveViewState] = useState<NotificationDashboard | 'home' | 'auth'>('home');
+  const [accountEntryMode, setAccountEntryMode] = useState<'sign-in' | 'sign-up'>('sign-in');
+  const [pendingProductStatusChange, setPendingProductStatusChange] = useState<{ products: Product[]; isActive: boolean } | null>(null);
   const [mountedDashboards, setMountedDashboards] = useState<Set<NotificationDashboard>>(() => new Set());
   const setActiveView = useCallback((view: NotificationDashboard | 'home' | 'auth') => {
     setActiveViewState(view);
@@ -314,7 +316,7 @@ export default function ProductCatalog() {
   const selectedOnPage = visibleProducts.length > 0 && visibleProducts.every((product) => selected.includes(product.id));
   const activeProductsCount = products.filter((product) => product.is_active).length;
   const inStockSkus = products.filter((product) => product.is_active && product.quantity > 0).length;
-  const totalCostValue = products.reduce((sum, product) => sum + product.quantity * Number(product.cost_price), 0);
+  const totalCostValue = products.reduce((sum, product) => sum + (product.is_active ? product.quantity * Number(product.cost_price) : 0), 0);
   const lowStockCount = products.filter((product) => product.quantity > 0 && product.quantity <= product.reorder_level).length;
   const depletedCount = products.filter((product) => product.quantity === 0).length;
 
@@ -355,12 +357,21 @@ export default function ProductCatalog() {
     catch (cause) { notify(cause instanceof Error ? cause.message : 'Could not delete selected products.'); }
   }
   async function setProductsActive(ids: number[], isActive: boolean) {
-    if (!ids.length) return;
+    const productsToUpdate = ids
+      .map((id) => products.find((product) => product.id === id))
+      .filter((product): product is Product => product !== undefined && product.is_active !== isActive);
+    if (!productsToUpdate.length) return;
+    setPendingProductStatusChange({ products: productsToUpdate, isActive });
+  }
+  async function confirmProductStatusChange() {
+    if (!pendingProductStatusChange) return;
+    const { products: productsToUpdate, isActive } = pendingProductStatusChange;
+    setPendingProductStatusChange(null);
     try {
-      await Promise.all(ids.map((id) => api.updateProduct(id, { is_active: isActive })));
+      await Promise.all(productsToUpdate.map((product) => api.updateProduct(product.id, { is_active: isActive })));
       await loadData();
       setSelected([]);
-      notify(`${ids.length === 1 ? 'Product' : `${ids.length} products`} ${isActive ? 'activated' : 'deactivated'}.`);
+      notify(`${productsToUpdate.length === 1 ? 'Product' : `${productsToUpdate.length} products`} ${isActive ? 'activated' : 'deactivated'}.`);
     } catch (cause) { notify(cause instanceof Error ? cause.message : 'Could not update product availability.'); }
   }
   async function deleteProduct(product: Product) {
@@ -396,8 +407,8 @@ export default function ProductCatalog() {
     importRef.current.click();
   }
 
-  if (activeView === 'home') return <LandingPage onOpenDashboard={() => setActiveView('auth')}/>;
-  if (activeView === 'auth') return <AccountEntry onBack={() => setActiveView('home')} onAuthenticated={completeAccountSignIn}/>;
+  if (activeView === 'home') return <LandingPage onOpenAccount={(mode) => { setAccountEntryMode(mode); setActiveView('auth'); }}/>;
+  if (activeView === 'auth') return <AccountEntry initialMode={accountEntryMode} onBack={() => setActiveView('home')} onAuthenticated={completeAccountSignIn}/>;
 
   return <div className="catalog-shell">
     <aside className="catalog-sidebar">
@@ -464,7 +475,7 @@ export default function ProductCatalog() {
           {!loading && loadError && <tr><td colSpan={9} className="catalog-state catalog-error-state"><strong>Could not connect to inventory</strong><span>{loadError}</span><button className="catalog-button catalog-button-light" onClick={() => void loadData()}>Retry connection</button></td></tr>}
           {!loading && !loadError && visibleProducts.map((product) => {
             const status = stockStatus(product);
-            return <tr key={product.id} className={!product.is_active ? 'product-row-inactive' : ''}><td className="catalog-check-cell"><input type="checkbox" aria-label={`Select ${product.name}`} checked={selected.includes(product.id)} onChange={() => setSelected((current) => current.includes(product.id) ? current.filter((id) => id !== product.id) : [...current, product.id])}/></td><td><div className="catalog-product-cell"><span className="catalog-product-thumb"><Package size={17}/></span><span><strong>{product.name}</strong><small>{product.category_name || 'Uncategorized'}</small></span></div></td><td><span className="catalog-sku">{product.sku}</span><small className="catalog-barcode"><Barcode size={12}/>{product.sku.replace(/\D/g, '').slice(0, 12) || product.sku}</small></td><td><span className="catalog-category-chip">{product.category_name}</span></td><td>{product.supplier_name || <span className="catalog-muted">—</span>}</td><td>{currency(product.cost_price)}</td><td><strong className={`catalog-quantity ${status === 'Out of stock' ? 'is-out' : status === 'Low stock' ? 'is-low' : ''}`}>{product.quantity.toLocaleString()}</strong><small className="catalog-reorder">Min. {product.reorder_level}</small></td><td><span className={`catalog-status ${product.is_active ? status.toLowerCase().replace(/ /g, '-') : 'inactive'}`}>{product.is_active ? status : 'Inactive'}</span></td><td><div className="catalog-product-actions"><button className="catalog-row-action" aria-label={`Edit ${product.name}`} onClick={() => setModalProduct(product)}><MoreHorizontal size={17}/></button><button className="catalog-row-action" aria-label={`${product.is_active ? 'Deactivate' : 'Activate'} ${product.name}`} title={`${product.is_active ? 'Deactivate' : 'Activate'} product`} onClick={() => void setProductsActive([product.id], !product.is_active)}><Power size={15}/></button><button className="catalog-row-action danger" aria-label={`Delete ${product.name}`} title="Delete product" onClick={() => void deleteProduct(product)}><Trash2 size={15}/></button></div></td></tr>;
+            return <tr key={product.id} className={!product.is_active ? 'product-row-inactive' : ''}><td className="catalog-check-cell"><input type="checkbox" aria-label={`Select ${product.name}`} checked={selected.includes(product.id)} onChange={() => setSelected((current) => current.includes(product.id) ? current.filter((id) => id !== product.id) : [...current, product.id])}/></td><td><div className="catalog-product-cell"><span className="catalog-product-thumb"><Package size={17}/></span><span><strong>{product.name}</strong><small>{product.category_name || 'Uncategorized'}</small></span></div></td><td><span className="catalog-sku">{product.sku}</span><small className="catalog-barcode"><Barcode size={12}/>{product.sku.replace(/\D/g, '').slice(0, 12) || product.sku}</small></td><td><span className="catalog-category-chip">{product.category_name}</span></td><td>{product.supplier_name || <span className="catalog-muted">—</span>}</td><td>{currency(product.cost_price)}</td><td>{product.is_active ? <><strong className={`catalog-quantity ${status === 'Out of stock' ? 'is-out' : status === 'Low stock' ? 'is-low' : ''}`}>{product.quantity.toLocaleString()}</strong><small className="catalog-reorder">Min. {product.reorder_level}</small></> : <span className="catalog-muted" aria-label="Stock unavailable for inactive product">&mdash;</span>}</td><td><span className={`catalog-status ${product.is_active ? status.toLowerCase().replace(/ /g, '-') : 'inactive'}`}>{product.is_active ? status : 'Inactive'}</span></td><td><div className="catalog-product-actions"><button className="catalog-row-action" aria-label={`Edit ${product.name}`} onClick={() => setModalProduct(product)}><MoreHorizontal size={17}/></button><button className="catalog-row-action" aria-label={`${product.is_active ? 'Deactivate' : 'Activate'} ${product.name}`} title={`${product.is_active ? 'Deactivate' : 'Activate'} product`} onClick={() => void setProductsActive([product.id], !product.is_active)}><Power size={15}/></button><button className="catalog-row-action danger" aria-label={`Delete ${product.name}`} title="Delete product" onClick={() => void deleteProduct(product)}><Trash2 size={15}/></button></div></td></tr>;
           })}
           {!loading && !loadError && visibleProducts.length === 0 && <tr><td colSpan={9} className="catalog-state">No products match these filters. Try a different search or add a product.</td></tr>}
         </tbody></table></div>
@@ -475,6 +486,23 @@ export default function ProductCatalog() {
       <footer className="catalog-page-footer"><span>© 2026 StockPulse Operations</span><span><i/> Inventory data synced from Django</span></footer>
     </main>
     {notice && <div className="catalog-toast"><Check size={15}/>{notice}<button onClick={() => setNotice('')} aria-label="Dismiss"><X size={14}/></button></div>}
+    {pendingProductStatusChange && <div className="product-status-confirm-overlay" onMouseDown={(event) => event.target === event.currentTarget && setPendingProductStatusChange(null)}>
+      <section className="product-status-confirm" role="dialog" aria-modal="true" aria-labelledby="product-status-confirm-title" aria-describedby="product-status-confirm-description">
+        <span className={`product-status-confirm-icon ${pendingProductStatusChange.isActive ? 'is-activating' : ''}`}><Power size={19}/></span>
+        <h2 id="product-status-confirm-title">Confirm product {pendingProductStatusChange.isActive ? 'activation' : 'deactivation'}</h2>
+        <p id="product-status-confirm-description">
+          {pendingProductStatusChange.products.length === 1
+            ? <><strong>{pendingProductStatusChange.products[0].name}</strong> will be {pendingProductStatusChange.isActive ? 'available' : 'unavailable'} for inventory and sales. Existing product history will be preserved.</>
+            : <><strong>{pendingProductStatusChange.products.length} products</strong> will be {pendingProductStatusChange.isActive ? 'available' : 'unavailable'} for inventory and sales. Existing product history will be preserved.</>}
+        </p>
+        <div className="product-status-confirm-actions">
+          <button type="button" className="catalog-button catalog-button-light" onClick={() => setPendingProductStatusChange(null)}>Cancel</button>
+          <button type="button" className={`catalog-button ${pendingProductStatusChange.isActive ? 'catalog-button-primary' : 'product-status-confirm-deactivate'}`} onClick={() => void confirmProductStatusChange()}>
+            {pendingProductStatusChange.isActive ? 'Activate product' : 'Deactivate product'}
+          </button>
+        </div>
+      </section>
+    </div>}
     {modalProduct !== undefined && <ProductForm key={modalProduct?.id ?? 'new'} product={modalProduct} categories={categories} suppliers={suppliers} onClose={() => setModalProduct(undefined)} onSaved={async () => { setModalProduct(undefined); await loadData(); notify('Product saved to inventory.'); }}/ >}
     {showCategoryManager && <CategoryManager categories={categories} onClose={() => setShowCategoryManager(false)} onChanged={loadData}/>}
     {helpOpen && <HelpCenter onClose={() => setHelpOpen(false)} onNavigate={(view) => { setActiveView(view); setHelpOpen(false); }}/ >}

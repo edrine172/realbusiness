@@ -1,14 +1,15 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { ArrowRight, KeyRound, Package, ShieldCheck, UserRoundPlus } from 'lucide-react';
+import { ArrowLeft, ArrowRight, KeyRound, Package, ShieldCheck, UserRoundPlus } from 'lucide-react';
 import { api, type AccessUser } from './api';
 
 type AccountMode = 'sign-in' | 'sign-up';
 
-export default function AccountEntry({ onBack, onAuthenticated }: {
+export default function AccountEntry({ onBack, onAuthenticated, initialMode = 'sign-in' }: {
   onBack: () => void;
   onAuthenticated: (user: AccessUser) => void;
+  initialMode?: AccountMode;
 }) {
-  const [mode, setMode] = useState<AccountMode>('sign-in');
+  const [mode, setMode] = useState<AccountMode>(initialMode);
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [username, setUsername] = useState('');
@@ -64,6 +65,7 @@ export default function AccountEntry({ onBack, onAuthenticated }: {
         <div className="account-entry-card-overline"><span><ShieldCheck size={14}/> STOCKPULSE WORKSPACE</span><span className="account-entry-node"><i/> ACCOUNT PORTAL</span></div>
         <h1 id="account-entry-title">{mode === 'sign-in' ? 'Sign in to StockPulse' : 'Sign up for StockPulse'}</h1>
         <p className="account-entry-intro">{mode === 'sign-in' ? 'Enter your account details to continue to your workspace.' : 'Sign up for a workspace account to get started.'}</p>
+        {mode === 'sign-up' && <button className="account-entry-back-to-sign-in" type="button" onClick={() => { setMode('sign-in'); setError(''); setNotice(''); }}><ArrowLeft size={13}/> Back to sign in</button>}
         <div className="account-entry-tabs" role="tablist" aria-label="Account access mode">
           <button type="button" role="tab" aria-selected={mode === 'sign-in'} className={mode === 'sign-in' ? 'active' : ''} onClick={() => { setMode('sign-in'); setError(''); }}>Sign in</button>
           <button type="button" role="tab" aria-selected={mode === 'sign-up'} className={mode === 'sign-up' ? 'active' : ''} onClick={() => { setMode('sign-up'); setError(''); }}>Sign up</button>

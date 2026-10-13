@@ -660,6 +660,11 @@ class PointOfSaleTests(AdminAPITestCase):
             unit_price='10.00',
             cost_price='4.00',
         )
+        self.customer = Customer.objects.create(
+            customer_code='POS-CUST-001',
+            name='POS customer',
+            credit_limit='100.00',
+        )
 
     def checkout(self, **overrides):
         payload = {
@@ -704,6 +709,44 @@ class PointOfSaleTests(AdminAPITestCase):
         self.product.refresh_from_db()
         self.assertEqual(self.product.quantity, 4)
         self.assertFalse(Sale.objects.exists())
+
+    def test_partial_cash_payment_records_remaining_customer_balance(self):
+        response = self.checkout(customer=self.customer.id, cash_tendered='10.00')
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data['payment_method'], Sale.PaymentMethod.CASH)
+        self.assertEqual(response.data['cash_tendered'], '10.00')
+        self.assertEqual(response.data['paid_amount'], '10.00')
+        self.assertEqual(response.data['remaining_balance'], '8.00')
+        self.assertEqual(response.data['payment_status'], 'partial')
+        self.customer.refresh_from_db()
+        self.product.refresh_from_db()
+        self.assertEqual(self.customer.outstanding_balance, Decimal('8.00'))
+        self.assertEqual(self.product.quantity, 2)
+        self.assertEqual(
+            CustomerLedgerEntry.objects.filter(customer=self.customer, entry_type=CustomerLedgerEntry.EntryType.CHARGE).get().amount,
+            Decimal('18.00'),
+        )
+        self.assertEqual(
+            CustomerLedgerEntry.objects.filter(customer=self.customer, entry_type=CustomerLedgerEntry.EntryType.PAYMENT).get().amount,
+            Decimal('10.00'),
+        )
+
+        dashboard = self.client.get(f'/api/customers/{self.customer.id}/dashboard/').data
+        self.assertEqual(dashboard['outstanding_balance'], '8.00')
+        self.assertEqual(dashboard['total_paid_amount'], '10.00')
+        self.assertEqual(dashboard['total_remaining_balance'], '8.00')
+        self.assertEqual(dashboard['sales'][0]['remaining_balance'], '8.00')
+
+        payment = self.client.post(f'/api/customers/{self.customer.id}/payments/', {
+            'amount': '8.00',
+            'sale': response.data['id'],
+        }, format='json')
+        self.assertEqual(payment.status_code, 201)
+        dashboard = self.client.get(f'/api/customers/{self.customer.id}/dashboard/').data
+        self.assertEqual(dashboard['outstanding_balance'], '0.00')
+        self.assertEqual(dashboard['total_paid_amount'], '18.00')
+        self.assertEqual(dashboard['total_remaining_balance'], '0.00')
 
     def test_completed_sale_uses_discounted_price_snapshots_in_dashboard(self):
         checkout_response = self.checkout()

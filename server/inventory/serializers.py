@@ -236,8 +236,14 @@ class SaleSerializer(serializers.ModelSerializer):
     remaining_balance = serializers.SerializerMethodField()
     payment_status = serializers.SerializerMethodField()
 
+    def has_account_balance(self, sale):
+        return sale.payment_method == Sale.PaymentMethod.ACCOUNT or any(
+            entry.entry_type == CustomerLedgerEntry.EntryType.CHARGE
+            for entry in sale.ledger_entries.all()
+        )
+
     def get_paid_amount(self, sale):
-        if sale.payment_method != Sale.PaymentMethod.ACCOUNT:
+        if not self.has_account_balance(sale):
             return str(sale.total.quantize(Decimal('0.01')))
         paid_amounts = self.context.get('sale_paid_amounts')
         paid = paid_amounts.get(sale.id, Decimal('0')) if paid_amounts is not None else sum(
@@ -248,7 +254,7 @@ class SaleSerializer(serializers.ModelSerializer):
         return str(paid.quantize(Decimal('0.01')))
 
     def get_remaining_balance(self, sale):
-        if sale.payment_method != Sale.PaymentMethod.ACCOUNT:
+        if not self.has_account_balance(sale):
             return '0.00'
         return str(max(sale.total - Decimal(self.get_paid_amount(sale)), Decimal('0')).quantize(Decimal('0.01')))
 
@@ -289,11 +295,11 @@ class SaleCheckoutSerializer(serializers.Serializer):
 
     def validate(self, attrs):
         customer = attrs.get('customer')
+        if customer is not None and not customer.is_active:
+            raise serializers.ValidationError({'customer': 'This customer account is inactive.'})
         if attrs['payment_method'] == Sale.PaymentMethod.ACCOUNT:
             if customer is None:
                 raise serializers.ValidationError({'customer': 'Select a customer for an on-account sale.'})
-            if not customer.is_active:
-                raise serializers.ValidationError({'customer': 'This customer account is inactive.'})
         return attrs
 
 

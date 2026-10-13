@@ -227,7 +227,11 @@ class CustomerViewSet(viewsets.ModelViewSet):
     ordering = ['name']
 
     def _sale_payment_allocations(self, customer, sales):
-        account_sales = [sale for sale in sales if sale.payment_method == Sale.PaymentMethod.ACCOUNT]
+        account_sales = [
+            sale for sale in sales
+            if sale.payment_method == Sale.PaymentMethod.ACCOUNT
+            or any(entry.entry_type == CustomerLedgerEntry.EntryType.CHARGE for entry in sale.ledger_entries.all())
+        ]
         paid_by_sale = {
             sale.id: sum(
                 (entry.amount for entry in sale.ledger_entries.all()
@@ -259,6 +263,7 @@ class CustomerViewSet(viewsets.ModelViewSet):
         total_paid_amount = sum(
             (
                 sale.total if sale.payment_method != Sale.PaymentMethod.ACCOUNT
+                and not any(entry.entry_type == CustomerLedgerEntry.EntryType.CHARGE for entry in sale.ledger_entries.all())
                 else paid_by_sale.get(sale.id, Decimal('0'))
                 for sale in sales
             ),
@@ -269,6 +274,7 @@ class CustomerViewSet(viewsets.ModelViewSet):
                 max(sale.total - paid_by_sale.get(sale.id, Decimal('0')), Decimal('0'))
                 for sale in sales
                 if sale.payment_method == Sale.PaymentMethod.ACCOUNT
+                or any(entry.entry_type == CustomerLedgerEntry.EntryType.CHARGE for entry in sale.ledger_entries.all())
             ),
             Decimal('0'),
         )
@@ -314,10 +320,15 @@ class CustomerViewSet(viewsets.ModelViewSet):
         note = data.get('note', '').strip() or 'Payment received'
         sales = list(
             Sale.objects.select_for_update()
-            .filter(customer=customer, payment_method=Sale.PaymentMethod.ACCOUNT)
+            .filter(customer=customer)
             .prefetch_related('ledger_entries')
             .order_by('created_at', 'id')
         )
+        sales = [
+            sale for sale in sales
+            if sale.payment_method == Sale.PaymentMethod.ACCOUNT
+            or any(entry.entry_type == CustomerLedgerEntry.EntryType.CHARGE for entry in sale.ledger_entries.all())
+        ]
         paid_by_sale, _ = self._sale_payment_allocations(customer, sales)
         payment_remaining = data['amount']
         new_entries = []
@@ -974,7 +985,7 @@ class PurchaseViewSet(viewsets.ModelViewSet):
 
 
 class SaleViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = Sale.objects.prefetch_related('items').all()
+    queryset = Sale.objects.prefetch_related('items', 'ledger_entries').all()
     serializer_class = SaleSerializer
 
 
@@ -1022,8 +1033,17 @@ def checkout(request):
     if data['payment_method'] == Sale.PaymentMethod.CASH:
         if cash_tendered is None:
             raise ValidationError({'cash_tendered': 'Enter the cash received for this sale.'})
-        if cash_tendered < total:
-            raise ValidationError({'cash_tendered': f'Cash tendered must be at least {total}.'})
+        if cash_tendered <= 0:
+            raise ValidationError({'cash_tendered': 'Cash received must be greater than zero.'})
+        remaining_balance = max(total - cash_tendered, Decimal('0'))
+        if remaining_balance > 0:
+            if customer is None:
+                raise ValidationError({'customer': 'Select a customer to record the remaining balance.'})
+            if customer.credit_limit <= 0:
+                raise ValidationError({'customer': 'This customer does not have an approved credit limit.'})
+            if customer.outstanding_balance + remaining_balance > customer.credit_limit:
+                available_credit = max(customer.credit_limit - customer.outstanding_balance, Decimal('0'))
+                raise ValidationError({'customer': f'Available credit is {available_credit}; the remaining balance is {remaining_balance}.'})
     else:
         cash_tendered = None
 
@@ -1079,7 +1099,27 @@ def checkout(request):
             reference=receipt_number,
             note='POS sale on account',
         )
-    sale = Sale.objects.prefetch_related('items').get(pk=sale.pk)
+    elif cash_tendered is not None and cash_tendered < total:
+        remaining_balance = total - cash_tendered
+        customer.outstanding_balance += remaining_balance
+        customer.save(update_fields=['outstanding_balance'])
+        CustomerLedgerEntry.objects.create(
+            customer=customer,
+            sale=sale,
+            entry_type=CustomerLedgerEntry.EntryType.CHARGE,
+            amount=total,
+            reference=receipt_number,
+            note='POS sale with partial payment',
+        )
+        CustomerLedgerEntry.objects.create(
+            customer=customer,
+            sale=sale,
+            entry_type=CustomerLedgerEntry.EntryType.PAYMENT,
+            amount=cash_tendered,
+            reference=receipt_number,
+            note='POS partial cash payment',
+        )
+    sale = Sale.objects.prefetch_related('items', 'ledger_entries').get(pk=sale.pk)
     return Response(SaleSerializer(sale).data, status=201)
 
 
@@ -1154,7 +1194,7 @@ def sales_summary(request):
         'today_sales': str(totals['total'] or Decimal('0')),
         'transactions_today': todays_sales.count(),
         'recent_sales': SaleSerializer(
-            Sale.objects.prefetch_related('items')[:8],
+            Sale.objects.prefetch_related('items', 'ledger_entries')[:8],
             many=True,
         ).data,
     })
@@ -1285,7 +1325,7 @@ def expenses_bulk_upload(request):
 
 @api_view(['GET'])
 def dashboard_summary(request):
-    products = Product.objects.select_related('category', 'supplier').all()
+    products = Product.objects.select_related('category', 'supplier').filter(is_active=True)
     summary_products = ProductSerializer(products.order_by('quantity')[:8], many=True).data
     product_totals = products.aggregate(
         total_skus=Count('id'),

@@ -143,7 +143,7 @@ def build_report_summary(days, period_start=None, period_end=None):
         row['units'] += abs(movement.quantity)
         row['revenue'] += amount
 
-    products = list(Product.objects.select_related('category').all())
+    products = list(Product.objects.select_related('category').filter(is_active=True))
     inventory_value = sum((product.quantity * product.cost_price for product in products), Decimal('0'))
     inventory_units = sum(product.quantity for product in products)
     inventory_category_rows = {}
