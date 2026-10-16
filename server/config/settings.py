@@ -12,7 +12,11 @@ if not SECRET_KEY:
     if not DEBUG:
         raise ImproperlyConfigured('SECRET_KEY must be set when DEBUG is disabled.')
     SECRET_KEY = 'django-insecure-local-development-key-change-before-deployment'
-ALLOWED_HOSTS = [".onrender.com", '127.0.0.1', 'localhost']
+def env_list(name, default):
+    return [value.strip() for value in os.environ.get(name, default).split(',') if value.strip()]
+
+
+ALLOWED_HOSTS = env_list('ALLOWED_HOSTS', 'ssekanasystems.onrender.com,127.0.0.1,localhost')
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -100,21 +104,21 @@ USE_TZ = True
 STATIC_URL = 'static/'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-CORS_ALLOWED_ORIGINS = [
+CORS_ALLOWED_ORIGINS = env_list('CORS_ALLOWED_ORIGINS', ','.join([
     'http://localhost:5173',
     'http://127.0.0.1:5173',
     'https://ssekanasystems.vercel.app',
-]
+]))
 CORS_ALLOW_CREDENTIALS = True
 CSRF_COOKIE_SAMESITE = 'Lax' if DEBUG else 'None'
 CSRF_COOKIE_SECURE = not DEBUG
 SESSION_COOKIE_SAMESITE = 'Lax' if DEBUG else 'None'
 SESSION_COOKIE_SECURE = not DEBUG
-CSRF_TRUSTED_ORIGINS = [
+CSRF_TRUSTED_ORIGINS = env_list('CSRF_TRUSTED_ORIGINS', ','.join([
     'http://localhost:5173',
     'http://127.0.0.1:5173',
-    'https://ssekanasystems.vercel.app'
-]
+    'https://ssekanasystems.vercel.app',
+]))
 REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': ['rest_framework.permissions.IsAdminUser'],
     'DEFAULT_RENDERER_CLASSES': ['rest_framework.renderers.JSONRenderer', 'rest_framework.renderers.BrowsableAPIRenderer'],
