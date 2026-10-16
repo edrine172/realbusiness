@@ -260,7 +260,7 @@ export default function ProductCatalog() {
 
   async function signOut() {
     try { await api.accessLogout(); }
-    finally { setAccessUser(null); setAccessState('signedOut'); setMountedDashboards(new Set()); }
+    finally { setAccessUser(null); setAccessState('signedOut'); setMountedDashboards(new Set()); setAccountMenuOpen(false); setActiveView('home'); }
   }
 
   const completeAccountSignIn = useCallback((user: AccessUser) => {
