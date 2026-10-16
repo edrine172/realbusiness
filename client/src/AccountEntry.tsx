@@ -23,12 +23,28 @@ export default function AccountEntry({ onBack, onAuthenticated, initialMode = 's
 
   useEffect(() => {
     let current = true;
+    const sessionCheckTimeout = window.setTimeout(() => {
+      if (current) {
+        setCheckingSession(false);
+        setError('The server is taking longer than expected. You can still try signing in.');
+      }
+    }, 10000);
     void api.accountSession().then(({ user }) => {
       if (current) onAuthenticated(user);
-    }).catch(() => {
-      if (current) setCheckingSession(false);
+    }).catch((cause: unknown) => {
+      if (!current) return;
+      const message = cause instanceof Error ? cause.message : '';
+      if (!/(401|sign-in is required)/i.test(message)) {
+        setError('Could not check your existing session. The server may be starting; you can still try signing in.');
+      }
+      setCheckingSession(false);
+    }).finally(() => {
+      window.clearTimeout(sessionCheckTimeout);
     });
-    return () => { current = false; };
+    return () => {
+      current = false;
+      window.clearTimeout(sessionCheckTimeout);
+    };
   }, [onAuthenticated]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -70,7 +86,8 @@ export default function AccountEntry({ onBack, onAuthenticated, initialMode = 's
           <button type="button" role="tab" aria-selected={mode === 'sign-in'} className={mode === 'sign-in' ? 'active' : ''} onClick={() => { setMode('sign-in'); setError(''); }}>Sign in</button>
           <button type="button" role="tab" aria-selected={mode === 'sign-up'} className={mode === 'sign-up' ? 'active' : ''} onClick={() => { setMode('sign-up'); setError(''); }}>Sign up</button>
         </div>
-        {checkingSession ? <div className="account-entry-status" role="status">Checking existing session…</div> : <form className="account-entry-form" onSubmit={(event) => void submit(event)}>
+        {checkingSession && <div className="account-entry-status" role="status">Checking existing session…</div>}
+        <form className="account-entry-form" onSubmit={(event) => void submit(event)}>
           {mode === 'sign-up' && <div className="account-entry-name-row"><label className="catalog-field">First name<input autoComplete="given-name" required maxLength={150} value={firstName} onChange={(event) => setFirstName(event.target.value)}/></label><label className="catalog-field">Last name<input autoComplete="family-name" required maxLength={150} value={lastName} onChange={(event) => setLastName(event.target.value)}/></label></div>}
           <label className="catalog-field">Username<input autoComplete="username" required maxLength={150} value={username} onChange={(event) => setUsername(event.target.value)}/></label>
           {mode === 'sign-up' && <label className="catalog-field">Email address<input type="email" autoComplete="email" required value={email} onChange={(event) => setEmail(event.target.value)}/></label>}
@@ -80,7 +97,7 @@ export default function AccountEntry({ onBack, onAuthenticated, initialMode = 's
           {error && <p className="account-entry-error" role="alert">{error}</p>}
           {notice && <p className="account-entry-password-note" role="status">{notice}</p>}
           <button className="account-entry-submit" disabled={busy}>{busy ? 'Please wait…' : mode === 'sign-in' ? 'Sign in to workspace' : 'Sign up'}<ArrowRight size={15}/></button>
-        </form>}
+        </form>
         <div className="account-entry-card-footer"><ShieldCheck size={14}/><span>{mode === 'sign-in' ? 'Your workspace account is protected by a secure session.' : 'New accounts receive standard workspace access.'}</span></div>
       </div>
       <p className="account-entry-access-note"><UserRoundPlus size={13}/> Administrator tools require an authorized account.</p>

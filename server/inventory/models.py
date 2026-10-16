@@ -175,7 +175,7 @@ class Sale(models.Model):
     total = models.DecimalField(max_digits=12, decimal_places=2)
     cash_tendered = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     change_due = models.DecimalField(max_digits=12, decimal_places=2, default=0)
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
 
     class Meta:
         ordering = ['-created_at']
@@ -461,7 +461,7 @@ class StockMovement(models.Model):
     quantity = models.IntegerField()
     note = models.CharField(max_length=240, blank=True)
     reference = models.CharField(max_length=80, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
 
     class Meta:
         ordering = ['-created_at']

@@ -120,6 +120,6 @@ CSRF_TRUSTED_ORIGINS = env_list('CSRF_TRUSTED_ORIGINS', ','.join([
     'https://ssekanasystems.vercel.app',
 ]))
 REST_FRAMEWORK = {
-    'DEFAULT_PERMISSION_CLASSES': ['rest_framework.permissions.IsAdminUser'],
+    'DEFAULT_PERMISSION_CLASSES': ['inventory.permissions.RoleModelPermissions'],
     'DEFAULT_RENDERER_CLASSES': ['rest_framework.renderers.JSONRenderer', 'rest_framework.renderers.BrowsableAPIRenderer'],
 }

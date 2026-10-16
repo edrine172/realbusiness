@@ -1,7 +1,7 @@
 import json
 from json import JSONDecodeError
 
-from django.contrib.auth import authenticate, get_user_model, login, logout
+from django.contrib.auth import authenticate, get_user_model, login, logout, update_session_auth_hash
 from django.contrib.auth.models import Group, Permission
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.validators import validate_email
@@ -54,7 +54,7 @@ def access_login(request):
     except JSONDecodeError:
         return JsonResponse({'detail': 'Invalid JSON body.'}, status=400)
     user = authenticate(request, username=data.get('username', ''), password=data.get('password', ''))
-    if user is None or not user.is_active or not (user.is_staff or user.is_superuser):
+    if user is None or not user.is_active or not user.is_superuser:
         return JsonResponse({'detail': 'Administrator sign-in failed.'}, status=400)
     login(request, user)
     _audit(user, 'session.login', 'user', user.pk)
@@ -63,7 +63,7 @@ def access_login(request):
 
 @require_GET
 def access_session(request):
-    if not request.user.is_authenticated or not request.user.is_active or not (request.user.is_staff or request.user.is_superuser):
+    if not request.user.is_authenticated or not request.user.is_active or not request.user.is_superuser:
         return JsonResponse({'detail': 'Administrator sign-in required.'}, status=401)
     return JsonResponse({'user': _user_payload(request.user)})
 
@@ -156,7 +156,7 @@ class IsAdmin(BasePermission):
             request.user
             and request.user.is_authenticated
             and request.user.is_active
-            and (request.user.is_staff or request.user.is_superuser)
+            and request.user.is_superuser
         )
 
 
@@ -198,14 +198,36 @@ class AccessUserSerializer(serializers.ModelSerializer):
 
     def update(self, instance, validated_data):
         groups = validated_data.pop('groups', None)
-        validated_data.pop('password', None)
+        password = validated_data.pop('password', None)
+        old_username = instance.get_username()
         if instance.is_superuser and validated_data.get('is_active') is False:
             if User.objects.filter(is_superuser=True, is_active=True).count() <= 1:
                 raise serializers.ValidationError({'is_active': 'The last active superuser cannot be deactivated.'})
         user = super().update(instance, validated_data)
         if groups is not None:
             user.groups.set(groups)
-        _audit(self.context['request'].user, 'user.updated', 'user', user.pk, {'groups': list(user.groups.values_list('name', flat=True))})
+        if password:
+            user.set_password(password)
+            user.save(update_fields=['password'])
+            request = self.context['request']
+            if request.user.pk == user.pk:
+                update_session_auth_hash(request, user)
+            else:
+                for session in Session.objects.filter(expire_date__gt=timezone.now()).iterator():
+                    if session.get_decoded().get('_auth_user_id') == str(user.pk):
+                        session.delete()
+        _audit(
+            self.context['request'].user,
+            'user.updated',
+            'user',
+            user.pk,
+            {
+                'username': user.get_username(),
+                'previous_username': old_username if old_username != user.get_username() else None,
+                'password_reset': bool(password),
+                'groups': list(user.groups.values_list('name', flat=True)),
+            },
+        )
         return user
 
     class Meta:

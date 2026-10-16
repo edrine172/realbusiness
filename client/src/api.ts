@@ -1,5 +1,20 @@
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000/api';
+const configuredApiBase = import.meta.env.VITE_API_BASE_URL?.trim();
+const normalizedApiBase = configuredApiBase?.replace(/\/+$/, '');
+const API_BASE = normalizedApiBase
+  ? (normalizedApiBase.endsWith('/api') ? normalizedApiBase : `${normalizedApiBase}/api`)
+  : (import.meta.env.DEV ? 'http://localhost:8000/api' : '');
 let accessCsrfToken = '';
+
+function apiUrl(path: string) {
+  if (!API_BASE) {
+    throw new Error('Backend URL is not configured. Set VITE_API_BASE_URL in Vercel to your Render service URL ending in /api, then redeploy.');
+  }
+  return `${API_BASE}${path}`;
+}
+
+function csrfInitializationError(response: Response) {
+  return new Error(`Could not initialize secure account access (HTTP ${response.status}). Check that VITE_API_BASE_URL points to your live Render API and ends in /api.`);
+}
 
 export interface ExchangeRatesData {
   base_currency: 'UGX';
@@ -561,8 +576,8 @@ export type StaffMemberInput = Omit<StaffMember, 'id' | 'employee_number' | 'pay
 
 async function ensureCsrfToken() {
   if (accessCsrfToken) return;
-  const response = await fetch(`${API_BASE}/access/csrf/`, { credentials: 'include' });
-  if (!response.ok) throw new Error('Could not initialize the secure session.');
+  const response = await fetch(apiUrl('/access/csrf/'), { credentials: 'include' });
+  if (!response.ok) throw csrfInitializationError(response);
   const csrfData = await response.json() as { csrf_token: string };
   accessCsrfToken = csrfData.csrf_token;
 }
@@ -589,7 +604,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     headers.set('X-CSRFToken', accessCsrfToken);
   }
 
-  const response = await fetch(`${API_BASE}${path}`, {
+  const response = await fetch(apiUrl(path), {
     ...options,
     credentials: 'include',
     headers,
@@ -602,7 +617,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     if (!headers.has('Content-Type') && options?.body) headers.set('Content-Type', 'application/json');
     headers.set('X-CSRFToken', accessCsrfToken);
 
-    const retryResponse = await fetch(`${API_BASE}${path}`, {
+    const retryResponse = await fetch(apiUrl(path), {
       ...options,
       credentials: 'include',
       headers,
@@ -633,8 +648,8 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 async function accountAuthRequest(path: string, payload: Record<string, string>) {
-  const csrfResponse = await fetch(`${API_BASE}/access/csrf/`, { credentials: 'include' });
-  if (!csrfResponse.ok) throw new Error('Could not initialize secure account access.');
+  const csrfResponse = await fetch(apiUrl('/access/csrf/'), { credentials: 'include' });
+  if (!csrfResponse.ok) throw csrfInitializationError(csrfResponse);
   const csrfData = await csrfResponse.json() as { csrf_token: string };
   accessCsrfToken = csrfData.csrf_token;
   const result = await request<{ user: AccessUser; csrf_token: string }>(path, { method: 'POST', body: JSON.stringify(payload) });
@@ -648,8 +663,8 @@ export const api = {
   accountSession: () => request<{ user: AccessUser }>('/account/session/'),
   accountLogout: () => request<{ ok: boolean }>('/account/logout/', { method: 'POST', body: JSON.stringify({}) }),
   async accessLogin(username: string, password: string) {
-    const csrfResponse = await fetch(`${API_BASE}/access/csrf/`, { credentials: 'include' });
-    if (!csrfResponse.ok) throw new Error('Could not initialize secure administrator sign-in.');
+    const csrfResponse = await fetch(apiUrl('/access/csrf/'), { credentials: 'include' });
+    if (!csrfResponse.ok) throw csrfInitializationError(csrfResponse);
     const csrfData = await csrfResponse.json() as { csrf_token: string };
     accessCsrfToken = csrfData.csrf_token;
     const result = await request<{ user: AccessUser; csrf_token: string }>('/access/login/', { method: 'POST', body: JSON.stringify({ username, password }) });
@@ -657,8 +672,8 @@ export const api = {
     return result;
   },
   async accessSession() {
-    const response = await fetch(`${API_BASE}/access/csrf/`, { credentials: 'include' });
-    if (!response.ok) throw new Error('Could not initialize the secure access session.');
+    const response = await fetch(apiUrl('/access/csrf/'), { credentials: 'include' });
+    if (!response.ok) throw csrfInitializationError(response);
     const csrf = await response.json() as { csrf_token: string };
     accessCsrfToken = csrf.csrf_token;
     return request<{ user: AccessUser }>('/access/session/');
@@ -676,7 +691,7 @@ export const api = {
   accessUsers: () => request<AccessUser[]>('/access/users/'),
   createAccessUser: (user: { username: string; email: string; first_name: string; last_name: string; password: string; is_active: boolean; is_staff: boolean; groups: number[] }) =>
     request<AccessUser>('/access/users/', { method: 'POST', body: JSON.stringify(user) }),
-  updateAccessUser: (id: number, user: Partial<Pick<AccessUser, 'email' | 'first_name' | 'last_name' | 'is_active' | 'is_staff'>> & { groups?: number[] }) =>
+  updateAccessUser: (id: number, user: Partial<Pick<AccessUser, 'username' | 'email' | 'first_name' | 'last_name' | 'is_active' | 'is_staff'>> & { groups?: number[]; password?: string }) =>
     request<AccessUser>(`/access/users/${id}/`, { method: 'PATCH', body: JSON.stringify(user) }),
   forceLogoutAccessUser: (id: number) =>
     request<{ ok: boolean; revoked_sessions: number }>(`/access/users/${id}/force_logout/`, { method: 'POST', body: JSON.stringify({}) }),

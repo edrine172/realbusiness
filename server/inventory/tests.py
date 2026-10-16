@@ -1380,6 +1380,19 @@ class AccessControlDashboardTests(APITestCase):
         self.assertTrue(user.check_password('temporary-password-123'))
         self.assertEqual(list(user.groups.values_list('name', flat=True)), ['Warehouse Operator'])
 
+        updated = self.client.patch(f'/api/access/users/{user.id}/', {
+            'username': 'warehouse-lead',
+            'password': 'new-temporary-password-456',
+            'is_staff': False,
+        }, format='json')
+        self.assertEqual(updated.status_code, 200)
+        user.refresh_from_db()
+        self.assertEqual(user.username, 'warehouse-lead')
+        self.assertTrue(user.check_password('new-temporary-password-456'))
+        self.assertFalse(user.check_password('temporary-password-123'))
+        self.assertFalse(user.is_staff)
+        self.assertEqual(user.groups.get().name, 'Warehouse Operator')
+
         disabled = self.client.patch(f"/api/access/users/{user.id}/", {'is_active': False}, format='json')
         self.assertEqual(disabled.status_code, 200)
         self.assertFalse(disabled.data['is_active'])
@@ -1390,6 +1403,24 @@ class AccessControlDashboardTests(APITestCase):
         self.assertEqual(dashboard['role_count'], 1)
         self.assertTrue(any(event['action'] == 'user.created' for event in dashboard['audit_log']))
         self.assertGreaterEqual(SecurityAuditEvent.objects.count(), 3)
+
+    def test_role_permissions_control_model_api_access(self):
+        permission = Permission.objects.get(codename='view_product', content_type__app_label='inventory')
+        role = Group.objects.create(name='Product viewers')
+        role.permissions.add(permission)
+        user = get_user_model().objects.create_user(
+            username='product-viewer',
+            password='secure-test-password',
+            is_staff=True,
+        )
+        user.groups.add(role)
+        self.client.force_authenticate(user=user)
+
+        products = self.client.get('/api/products/')
+        suppliers = self.client.get('/api/suppliers/')
+
+        self.assertEqual(products.status_code, 200)
+        self.assertIn(suppliers.status_code, [403, 404])
 
     def test_session_login_requires_csrf_and_rejects_non_superusers(self):
         client = Client(enforce_csrf_checks=True)

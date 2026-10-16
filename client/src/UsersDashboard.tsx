@@ -33,7 +33,15 @@ function LoginPanel({ onLogin }: { onLogin: (username: string, password: string)
 }
 
 function UserForm({ groups, user, onClose, onSaved }: { groups: AccessGroup[]; user?: AccessUser | null; onClose: () => void; onSaved: (user: AccessUser) => Promise<void> }) {
-  const [draft, setDraft] = useState(() => ({ username: user?.username ?? '', email: user?.email ?? '', first_name: user?.first_name ?? '', last_name: user?.last_name ?? '', password: '', groups: user?.groups.map((group) => typeof group === 'number' ? group : group.id) ?? [] as number[] }));
+  const [draft, setDraft] = useState(() => ({
+    username: user?.username ?? '',
+    email: user?.email ?? '',
+    first_name: user?.first_name ?? '',
+    last_name: user?.last_name ?? '',
+    password: '',
+    is_staff: user?.is_staff ?? true,
+    groups: user?.groups.map((group) => typeof group === 'number' ? group : group.id) ?? [] as number[],
+  }));
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   function toggleGroup(id: number) { setDraft((current) => ({ ...current, groups: current.groups.includes(id) ? current.groups.filter((groupId) => groupId !== id) : [...current.groups, id] })); }
@@ -43,14 +51,55 @@ function UserForm({ groups, user, onClose, onSaved }: { groups: AccessGroup[]; u
     setError('');
     try {
       const saved = user
-        ? await api.updateAccessUser(user.id, { email: draft.email, first_name: draft.first_name, last_name: draft.last_name, groups: draft.groups })
-        : await api.createAccessUser({ ...draft, is_active: true, is_staff: true });
+        ? await api.updateAccessUser(user.id, {
+          username: draft.username,
+          email: draft.email,
+          first_name: draft.first_name,
+          last_name: draft.last_name,
+          is_staff: draft.is_staff,
+          groups: draft.groups,
+          ...(draft.password ? { password: draft.password } : {}),
+        })
+        : await api.createAccessUser({ ...draft, is_active: true });
       await onSaved(saved);
     }
     catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not invite this user.'); }
     finally { setSaving(false); }
   }
-  return <div className="catalog-overlay" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><form className="catalog-modal access-user-modal" onSubmit={submit}><div className="catalog-modal-heading"><div><span className="catalog-eyebrow">TEAM ACCESS</span><h2>{user ? 'Edit user access' : 'Invite new user'}</h2><p>{user ? 'Update profile details and assigned Django groups.' : 'Create a staff account and assign one or more roles.'}</p></div><button className="catalog-icon-button" type="button" onClick={onClose} aria-label="Close"><X size={18}/></button></div><div className="catalog-form-row"><label className="catalog-field">First name<input required maxLength={150} value={draft.first_name} onChange={(event) => setDraft((current) => ({ ...current, first_name: event.target.value }))}/></label><label className="catalog-field">Last name<input required maxLength={150} value={draft.last_name} onChange={(event) => setDraft((current) => ({ ...current, last_name: event.target.value }))}/></label></div><div className="catalog-form-row"><label className="catalog-field">Username<input required autoComplete="off" disabled={Boolean(user)} value={draft.username} onChange={(event) => setDraft((current) => ({ ...current, username: event.target.value }))}/></label><label className="catalog-field">Work email<input type="email" required value={draft.email} onChange={(event) => setDraft((current) => ({ ...current, email: event.target.value }))}/></label></div>{!user && <label className="catalog-field">Temporary password<input type="password" required minLength={8} autoComplete="new-password" value={draft.password} onChange={(event) => setDraft((current) => ({ ...current, password: event.target.value }))}/></label>}<fieldset className="access-group-options"><legend>Assign roles</legend>{groups.map((group) => <label key={group.id}><input type="checkbox" checked={draft.groups.includes(group.id)} onChange={() => toggleGroup(group.id)}/>{group.name}</label>)}{!groups.length && <small>Create a role before assigning groups.</small>}</fieldset>{error && <p className="catalog-form-error">{error}</p>}<div className="catalog-modal-actions"><button type="button" className="catalog-button catalog-button-light" onClick={onClose}>Cancel</button><button className="catalog-button catalog-button-primary" disabled={saving}>{saving ? 'Saving…' : user ? 'Save user' : 'Create user'}</button></div></form></div>;
+  return <div className="catalog-overlay" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+    <form className="catalog-modal access-user-modal" onSubmit={submit}>
+      <div className="catalog-modal-heading">
+        <div><span className="catalog-eyebrow">TEAM ACCESS</span><h2>{user ? 'Edit user access' : 'Invite new user'}</h2><p>{user ? 'Update credentials, dashboard access, and assigned roles.' : 'Create an account and choose its dashboard access and roles.'}</p></div>
+        <button className="catalog-icon-button" type="button" onClick={onClose} aria-label="Close"><X size={18}/></button>
+      </div>
+      <div className="catalog-form-row">
+        <label className="catalog-field">First name<input required maxLength={150} value={draft.first_name} onChange={(event) => setDraft((current) => ({ ...current, first_name: event.target.value }))}/></label>
+        <label className="catalog-field">Last name<input required maxLength={150} value={draft.last_name} onChange={(event) => setDraft((current) => ({ ...current, last_name: event.target.value }))}/></label>
+      </div>
+      <div className="catalog-form-row">
+        <label className="catalog-field">Username<input required autoComplete="off" maxLength={150} value={draft.username} onChange={(event) => setDraft((current) => ({ ...current, username: event.target.value }))}/></label>
+        <label className="catalog-field">Work email<input type="email" required value={draft.email} onChange={(event) => setDraft((current) => ({ ...current, email: event.target.value }))}/></label>
+      </div>
+      <label className="catalog-field">{user ? 'Reset password (leave blank to keep current)' : 'Temporary password'}
+        <input type="password" required={!user} minLength={8} autoComplete="new-password" value={draft.password} onChange={(event) => setDraft((current) => ({ ...current, password: event.target.value }))}/>
+      </label>
+      <fieldset className="access-group-options">
+        <legend>Account access</legend>
+        <label><input type="checkbox" checked={draft.is_staff} onChange={(event) => setDraft((current) => ({ ...current, is_staff: event.target.checked }))}/>Allow dashboard sign-in</label>
+        <small>Dashboard access is also limited by the permissions granted to the assigned roles.</small>
+      </fieldset>
+      <fieldset className="access-group-options">
+        <legend>Assign roles</legend>
+        {groups.map((group) => <label key={group.id}><input type="checkbox" checked={draft.groups.includes(group.id)} onChange={() => toggleGroup(group.id)}/>{group.name}</label>)}
+        {!groups.length && <small>Create a role before assigning groups.</small>}
+      </fieldset>
+      {error && <p className="catalog-form-error">{error}</p>}
+      <div className="catalog-modal-actions">
+        <button type="button" className="catalog-button catalog-button-light" onClick={onClose}>Cancel</button>
+        <button className="catalog-button catalog-button-primary" disabled={saving}>{saving ? 'Saving…' : user ? 'Save user' : 'Create user'}</button>
+      </div>
+    </form>
+  </div>;
 }
 
 function RoleForm({ onClose, onSaved }: { onClose: () => void; onSaved: (group: AccessGroup) => Promise<void> }) {

@@ -5,6 +5,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from django.db.models import F, Sum
 from django.utils import timezone
 
+from .date_ranges import day_range
 from .models import Expense, Product, Purchase, Sale, StockMovement
 
 
@@ -12,13 +13,14 @@ CENT = Decimal('0.01')
 
 
 def _sale_period(start, end, include_breakdown=False):
+    start_at, end_at = day_range(start, end)
     sales = Sale.objects.prefetch_related('items__product__category').filter(
-        created_at__date__gte=start,
-        created_at__date__lte=end,
+        created_at__gte=start_at,
+        created_at__lt=end_at,
     )
     movements = StockMovement.objects.select_related('product', 'product__category').filter(
-        created_at__date__gte=start,
-        created_at__date__lte=end,
+        created_at__gte=start_at,
+        created_at__lt=end_at,
         movement_type=StockMovement.MovementType.OUTBOUND,
     )
     sale_receipts = set()
@@ -104,13 +106,14 @@ def build_report_summary(days, period_start=None, period_end=None):
     days = (report_end - start).days + 1
     previous_end = start - timedelta(days=1)
     previous_start = previous_end - timedelta(days=days - 1)
+    start_at, end_at = day_range(start, report_end)
     current = _sale_period(start, report_end, include_breakdown=True)
     previous = _sale_period(previous_start, previous_end)
 
     received_purchases = Purchase.objects.filter(
         status=Purchase.Status.RECEIVED,
-        received_at__date__gte=start,
-        received_at__date__lte=report_end,
+        received_at__gte=start_at,
+        received_at__lt=end_at,
     ).select_related('supplier').prefetch_related('items__product__category')
     purchase_references = set()
     purchase_by_date = defaultdict(Decimal)
@@ -129,8 +132,8 @@ def build_report_summary(days, period_start=None, period_end=None):
             row['revenue'] += amount
 
     legacy_inbound = StockMovement.objects.select_related('product', 'product__category').filter(
-        created_at__date__gte=start,
-        created_at__date__lte=report_end,
+        created_at__gte=start_at,
+        created_at__lt=end_at,
         movement_type=StockMovement.MovementType.INBOUND,
     ).exclude(reference__in=purchase_references)
     for movement in legacy_inbound:

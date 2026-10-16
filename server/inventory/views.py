@@ -18,8 +18,9 @@ from rest_framework.response import Response
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from .models import Category, Customer, CustomerLedgerEntry, Expense, ExpenseBudget, Notification, PayrollLine, PayrollRun, Product, Purchase, PurchaseItem, Sale, SaleItem, SecurityAuditEvent, StaffAttendance, StaffMember, StockMovement, Supplier, SupplierLedgerEntry, SystemSetting
 from .serializers import CategorySerializer, CustomerLedgerEntrySerializer, CustomerPaymentSerializer, CustomerSerializer, ExpenseBudgetSerializer, ExpenseSerializer, NotificationSerializer, PayrollRunSerializer, ProductSerializer, PurchaseSerializer, SaleCheckoutSerializer, SaleSerializer, StaffAttendanceInputSerializer, StaffAttendanceSerializer, StaffMemberSerializer, StockAdjustmentSerializer, StockMovementSerializer, SupplierLedgerEntrySerializer, SupplierPaymentSerializer, SupplierSerializer
+from .date_ranges import day_range
 from .reports import build_report_summary
-from .access_control import IsAdmin
+from .permissions import RoleModelPermissions
 
 DAILY_TARGET_UNITS = 15
 DAILY_TARGET_MET_WAGE = Decimal('8000.00')
@@ -54,7 +55,7 @@ SETTINGS_DEFAULTS = {
 
 
 @api_view(['GET', 'PATCH'])
-@permission_classes([IsAdmin])
+@permission_classes([RoleModelPermissions])
 def system_settings(request):
     settings = {category: values.copy() for category, values in SETTINGS_DEFAULTS.items()}
     for item in SystemSetting.objects.all():
@@ -532,7 +533,7 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
 class StaffMemberViewSet(viewsets.ModelViewSet):
     queryset = StaffMember.objects.all()
     serializer_class = StaffMemberSerializer
-    permission_classes = [IsAdmin]
+    permission_classes = [RoleModelPermissions]
     http_method_names = ['get', 'post', 'patch', 'head', 'options']
     filter_backends = [SearchFilter, OrderingFilter]
     search_fields = ['employee_number', 'full_name', 'job_title', 'department', 'email']
@@ -561,7 +562,7 @@ class StaffMemberViewSet(viewsets.ModelViewSet):
 
 
 class StaffAttendanceViewSet(viewsets.ViewSet):
-    permission_classes = [IsAdmin]
+    permission_classes = [RoleModelPermissions]
 
     def list(self, request):
         period = request.query_params.get('period', '')
@@ -644,7 +645,7 @@ class StaffAttendanceViewSet(viewsets.ViewSet):
 
 
 @api_view(['GET'])
-@permission_classes([IsAdmin])
+@permission_classes([RoleModelPermissions])
 def staff_dashboard(request):
     current_period = request.query_params.get('period') or timezone.localdate().strftime('%Y-%m')
     try:
@@ -705,7 +706,7 @@ def staff_dashboard(request):
 class PayrollRunViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = PayrollRun.objects.prefetch_related('lines').all()
     serializer_class = PayrollRunSerializer
-    permission_classes = [IsAdmin]
+    permission_classes = [RoleModelPermissions]
 
     @action(detail=False, methods=['post'])
     @transaction.atomic
@@ -861,7 +862,8 @@ class StockMovementViewSet(viewsets.ModelViewSet):
                 raise ValidationError({'date': 'Enter a date in YYYY-MM-DD format.'})
             if parsed_date.isoformat() != selected_date:
                 raise ValidationError({'date': 'Enter a date in YYYY-MM-DD format.'})
-            return queryset.filter(created_at__date=parsed_date)
+            start_at, end_at = day_range(parsed_date)
+            return queryset.filter(created_at__gte=start_at, created_at__lt=end_at)
         if month is not None:
             if days is not None:
                 raise ValidationError({'month': 'Use either a rolling range or a calendar month.'})
@@ -871,7 +873,8 @@ class StockMovementViewSet(viewsets.ModelViewSet):
                 raise ValidationError({'month': 'Enter a month in YYYY-MM format.'})
             if parsed_month.strftime('%Y-%m') != month:
                 raise ValidationError({'month': 'Enter a month in YYYY-MM format.'})
-            return queryset.filter(created_at__year=parsed_month.year, created_at__month=parsed_month.month)
+            start_at, end_at = day_range(parsed_month.date().replace(day=1), (parsed_month.date().replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1))
+            return queryset.filter(created_at__gte=start_at, created_at__lt=end_at)
         if days is None:
             return queryset
         allowed_ranges = {1, 7, 30, 90, 180, 365, 730, 1825, 3650, 18250, 36500, 73000}
@@ -1159,10 +1162,11 @@ def inventory_adjustment(request):
 @api_view(['GET'])
 def purchase_summary(request):
     month_start = timezone.localdate().replace(day=1)
+    month_start_at, _ = day_range(month_start)
     open_purchases = Purchase.objects.filter(status=Purchase.Status.ORDERED).prefetch_related('items')
     received_this_month = Purchase.objects.filter(
         status=Purchase.Status.RECEIVED,
-        received_at__date__gte=month_start,
+        received_at__gte=month_start_at,
     ).prefetch_related('items')
     open_value = sum(
         (item.quantity * item.unit_cost for purchase in open_purchases for item in purchase.items.all()),
@@ -1188,7 +1192,8 @@ def purchase_summary(request):
 @api_view(['GET'])
 def sales_summary(request):
     today = timezone.localdate()
-    todays_sales = Sale.objects.filter(created_at__date=today)
+    today_start, today_end = day_range(today)
+    todays_sales = Sale.objects.filter(created_at__gte=today_start, created_at__lt=today_end)
     totals = todays_sales.aggregate(total=Sum('total'))
     return Response({
         'today_sales': str(totals['total'] or Decimal('0')),
@@ -1334,15 +1339,16 @@ def dashboard_summary(request):
         low_stock_count=Count('id', filter=Q(quantity__gt=0, quantity__lte=F('reorder_level'))),
         out_of_stock_count=Count('id', filter=Q(quantity=0)),
     )
-    movements = StockMovement.objects.select_related('product', 'product__supplier').all()
     today = timezone.localdate()
     days = 30 if request.query_params.get('range') == '30d' else 7
     start = today - timedelta(days=days - 1)
-    period_movements = list(movements.filter(created_at__date__gte=start))
+    start_at, end_at = day_range(start, today)
+    movement_queryset = StockMovement.objects.select_related('product', 'product__supplier')
+    period_movements = list(movement_queryset.filter(created_at__gte=start_at, created_at__lt=end_at))
     sale_revenue_by_date = {}
     sale_cost_by_date = {}
     sale_receipts = set()
-    for sale in Sale.objects.prefetch_related('items').filter(created_at__date__gte=start):
+    for sale in Sale.objects.prefetch_related('items').filter(created_at__gte=start_at, created_at__lt=end_at):
         sale_date = timezone.localtime(sale.created_at).date()
         sale_revenue_by_date[sale_date] = sale_revenue_by_date.get(sale_date, Decimal('0')) + sale.subtotal - sale.discount_amount
         sale_cost_by_date[sale_date] = sale_cost_by_date.get(sale_date, Decimal('0')) + sum(
@@ -1398,7 +1404,7 @@ def dashboard_summary(request):
         })
     gross_profit = sales - period_cost
     gross_margin = round(float(gross_profit / sales * 100), 1) if sales else 0
-    recent_movements = StockMovementSerializer(movements[:12], many=True).data
+    recent_movements = StockMovementSerializer(movement_queryset[:12], many=True).data
     return Response({
         'total_skus': product_totals['total_skus'],
         'total_units': product_totals['total_units'] or 0,
