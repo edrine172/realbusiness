@@ -8,7 +8,8 @@ from urllib.request import urlopen
 
 from django.core.cache import cache
 from django.db import transaction
-from django.db.models import Count, F, Q, Sum
+from django.db.models import Case, Count, DecimalField, ExpressionWrapper, F, Q, Sum, Value, When
+from django.db.models.functions import Abs, TruncDate
 from django.utils import timezone
 from rest_framework.filters import OrderingFilter, SearchFilter
 from rest_framework import viewsets
@@ -1343,38 +1344,96 @@ def dashboard_summary(request):
     days = 30 if request.query_params.get('range') == '30d' else 7
     start = today - timedelta(days=days - 1)
     start_at, end_at = day_range(start, today)
-    movement_queryset = StockMovement.objects.select_related('product', 'product__supplier')
-    period_movements = list(movement_queryset.filter(created_at__gte=start_at, created_at__lt=end_at))
-    sale_revenue_by_date = {}
-    sale_cost_by_date = {}
-    sale_receipts = set()
-    for sale in Sale.objects.prefetch_related('items').filter(created_at__gte=start_at, created_at__lt=end_at):
-        sale_date = timezone.localtime(sale.created_at).date()
-        sale_revenue_by_date[sale_date] = sale_revenue_by_date.get(sale_date, Decimal('0')) + sale.subtotal - sale.discount_amount
-        sale_cost_by_date[sale_date] = sale_cost_by_date.get(sale_date, Decimal('0')) + sum(
-            (item.quantity * item.unit_cost for item in sale.items.all()), Decimal('0'),
+    sales_in_period = Sale.objects.filter(created_at__gte=start_at, created_at__lt=end_at)
+    sale_revenue_by_date = {
+        row['day']: row['revenue'] or Decimal('0')
+        for row in sales_in_period.annotate(day=TruncDate('created_at'))
+        .values('day')
+        .annotate(revenue=Sum(F('subtotal') - F('discount_amount')))
+    }
+    sale_cost_expression = ExpressionWrapper(
+        F('quantity') * F('unit_cost'),
+        output_field=DecimalField(max_digits=24, decimal_places=2),
+    )
+    sale_cost_by_date = {
+        row['day']: row['cost'] or Decimal('0')
+        for row in SaleItem.objects.filter(
+            sale__created_at__gte=start_at,
+            sale__created_at__lt=end_at,
         )
-        sale_receipts.add(sale.receipt_number)
+        .annotate(day=TruncDate('sale__created_at'))
+        .values('day')
+        .annotate(cost=Sum(sale_cost_expression))
+    }
+
+    sale_receipts = sales_in_period.values('receipt_number')
+    movement_amount_field = DecimalField(max_digits=24, decimal_places=2)
+    movement_queryset = StockMovement.objects.select_related('product', 'product__supplier')
+    movement_summaries = (
+        StockMovement.objects.filter(
+            created_at__gte=start_at,
+            created_at__lt=end_at,
+            movement_type__in=[StockMovement.MovementType.INBOUND, StockMovement.MovementType.OUTBOUND],
+        )
+        .exclude(Q(movement_type=StockMovement.MovementType.OUTBOUND, reference__in=sale_receipts))
+        .annotate(day=TruncDate('created_at'))
+        .values('day')
+        .annotate(
+            purchases=Sum(Case(
+                When(
+                    movement_type=StockMovement.MovementType.INBOUND,
+                    then=ExpressionWrapper(
+                        Abs(F('quantity')) * F('product__cost_price'),
+                        output_field=movement_amount_field,
+                    ),
+                ),
+                default=Value(Decimal('0.00'), output_field=movement_amount_field),
+                output_field=movement_amount_field,
+            )),
+            legacy_sales=Sum(Case(
+                When(
+                    movement_type=StockMovement.MovementType.OUTBOUND,
+                    then=ExpressionWrapper(
+                        Abs(F('quantity')) * F('product__unit_price'),
+                        output_field=movement_amount_field,
+                    ),
+                ),
+                default=Value(Decimal('0.00'), output_field=movement_amount_field),
+                output_field=movement_amount_field,
+            )),
+            legacy_sales_cost=Sum(Case(
+                When(
+                    movement_type=StockMovement.MovementType.OUTBOUND,
+                    then=ExpressionWrapper(
+                        Abs(F('quantity')) * F('product__cost_price'),
+                        output_field=movement_amount_field,
+                    ),
+                ),
+                default=Value(Decimal('0.00'), output_field=movement_amount_field),
+                output_field=movement_amount_field,
+            )),
+        )
+    )
     legacy_sales_by_date = {}
     purchases_by_date = {}
     legacy_sales_total = Decimal('0')
     legacy_sales_cost = Decimal('0')
     purchases = Decimal('0')
     today_purchases = Decimal('0')
-    for movement in period_movements:
-        movement_date = timezone.localtime(movement.created_at).date()
-        if movement.movement_type == 'inbound':
-            amount = abs(movement.quantity) * movement.product.cost_price
-            purchases += amount
-            purchases_by_date[movement_date] = purchases_by_date.get(movement_date, Decimal('0')) + amount
+    for row in movement_summaries:
+        movement_date = row['day']
+        day_purchases = row['purchases'] or Decimal('0')
+        legacy_revenue = row['legacy_sales'] or Decimal('0')
+        legacy_cost = row['legacy_sales_cost'] or Decimal('0')
+        if day_purchases:
+            purchases += day_purchases
+            purchases_by_date[movement_date] = day_purchases
             if movement_date == today:
-                today_purchases += amount
-        elif movement.movement_type == 'outbound' and movement.reference not in sale_receipts:
-            revenue = abs(movement.quantity) * movement.product.unit_price
-            cost = abs(movement.quantity) * movement.product.cost_price
-            legacy_sales_by_date[movement_date] = legacy_sales_by_date.get(movement_date, Decimal('0')) + revenue
-            legacy_sales_total += revenue
-            legacy_sales_cost += cost
+                today_purchases += day_purchases
+        if legacy_revenue:
+            legacy_sales_by_date[movement_date] = legacy_revenue
+            legacy_sales_total += legacy_revenue
+            legacy_sales_cost += legacy_cost
 
     sales = sum(sale_revenue_by_date.values(), Decimal('0')) + legacy_sales_total
     today_sales = sale_revenue_by_date.get(today, Decimal('0')) + legacy_sales_by_date.get(today, Decimal('0'))

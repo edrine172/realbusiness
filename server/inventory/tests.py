@@ -1338,6 +1338,63 @@ class DashboardSummaryPerformanceTests(AdminAPITestCase):
         self.assertEqual(len(response.data['series']), 30)
         self.assertLessEqual(len(queries), 12, [query['sql'] for query in queries])
 
+    def test_aggregated_summary_preserves_sales_and_legacy_movement_totals(self):
+        category = Category.objects.create(name='Dashboard aggregation')
+        product = Product.objects.create(
+            sku='DASH-AGG-001',
+            name='Dashboard aggregation product',
+            category=category,
+            unit_price='10.00',
+            cost_price='4.00',
+        )
+        sale = Sale.objects.create(
+            receipt_number='SALE-DASH-AGG-001',
+            customer_name='Walk-in Customer',
+            payment_method=Sale.PaymentMethod.CARD,
+            subtotal='20.00',
+            discount_amount='2.00',
+            total='19.53',
+        )
+        SaleItem.objects.create(
+            sale=sale,
+            product=product,
+            product_name=product.name,
+            product_sku=product.sku,
+            quantity=2,
+            unit_price='10.00',
+            unit_cost='4.00',
+        )
+        StockMovement.objects.create(
+            product=product,
+            movement_type=StockMovement.MovementType.INBOUND,
+            quantity=3,
+            reference='PO-LEGACY-DASH-001',
+        )
+        StockMovement.objects.create(
+            product=product,
+            movement_type=StockMovement.MovementType.OUTBOUND,
+            quantity=2,
+            reference='LEGACY-DASH-001',
+        )
+        StockMovement.objects.create(
+            product=product,
+            movement_type=StockMovement.MovementType.OUTBOUND,
+            quantity=2,
+            reference=sale.receipt_number,
+        )
+
+        response = self.client.get('/api/dashboard/summary/?range=30d')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['today_sales'], '38.00')
+        self.assertEqual(response.data['period_sales'], '38.00')
+        self.assertEqual(response.data['gross_profit'], '22.00')
+        self.assertEqual(response.data['today_purchases'], '12.00')
+        self.assertEqual(response.data['period_purchases'], '12.00')
+        self.assertAlmostEqual(sum(day['sales'] for day in response.data['series']), 38.0)
+        self.assertAlmostEqual(sum(day['purchases'] for day in response.data['series']), 12.0)
+
+
 
 class AccessControlDashboardTests(APITestCase):
     def setUp(self):
