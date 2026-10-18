@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import {
-  AlertTriangle, Barcode, Boxes, Check, ChevronDown, ChevronLeft,
+  AlertTriangle, Barcode, Boxes, Check, ChevronDown, ChevronLeft, ClipboardList,
   ChevronRight, CircleHelp, LayoutDashboard, ListFilter,
   BriefcaseBusiness, LogOut, MoreHorizontal, Package, Plus, Power, Printer, Search, Settings, SlidersHorizontal,
   Tags, Trash2, Truck, Users, Warehouse, X,
@@ -11,6 +11,7 @@ import FileActionMenu from './FileActionMenu';
 import DashboardOverview from './DashboardOverview';
 import InventoryDashboard from './InventoryDashboard';
 import PurchasesDashboard from './PurchasesDashboard';
+import PurchaseOrderClient from './PurchaseOrderClient';
 import PosDashboard from './PosDashboard';
 import ReportsDashboard from './ReportsDashboard';
 import CustomersDashboard from './CustomersDashboard';
@@ -31,13 +32,14 @@ type AvailabilityFilter = 'All products' | 'Active' | 'Inactive';
 const PAGE_SIZE_OPTIONS = [10, 20, 50];
 const stockStatus = (product: Product): Exclude<StatusFilter, 'All statuses'> => product.quantity === 0 ? 'Out of stock' : product.quantity <= product.reorder_level ? 'Low stock' : 'In stock';
 const adminViews = new Set<NotificationDashboard>(['users', 'settings', 'staff']);
-const dashboardViews = new Set<NotificationDashboard>(['overview', 'products', 'inventory', 'purchases', 'pos', 'sales', 'reports', 'customers', 'suppliers', 'expenses', 'users', 'settings', 'staff']);
+const dashboardViews = new Set<NotificationDashboard>(['overview', 'products', 'inventory', 'purchases', 'po-client', 'pos', 'sales', 'reports', 'customers', 'suppliers', 'expenses', 'users', 'settings', 'staff']);
 const isDashboardView = (view: NotificationDashboard | 'home' | 'auth'): view is NotificationDashboard => view !== 'home' && view !== 'auth' && dashboardViews.has(view);
 
 function dashboardLabel(view: NotificationDashboard | 'home' | 'auth') {
   if (view === 'staff') return 'Payroll & Staff';
   if (view === 'users') return 'Users & Roles';
   if (view === 'overview') return 'Dashboard';
+  if (view === 'po-client') return 'Purchasing Order (PO) Client';
   return view.charAt(0).toUpperCase() + view.slice(1);
 }
 
@@ -418,6 +420,7 @@ export default function ProductCatalog() {
         <button className={`catalog-nav-item ${activeView === 'products' ? 'active' : ''}`} onClick={() => setActiveView('products')}><Package size={15}/>Products</button>
         <button className={`catalog-nav-item ${activeView === 'inventory' ? 'active' : ''}`} onClick={() => setActiveView('inventory')}><Warehouse size={15}/>Inventory</button>
         <button className={`catalog-nav-item ${activeView === 'purchases' ? 'active' : ''}`} onClick={() => setActiveView('purchases')}><Truck size={15}/>Purchases</button>
+        <button className={`catalog-nav-item ${activeView === 'po-client' ? 'active' : ''}`} onClick={() => setActiveView('po-client')}><ClipboardList size={15}/>PO Client</button>
         <button className={`catalog-nav-item ${activeView === 'pos' ? 'active' : ''}`} onClick={() => setActiveView('pos')}><Boxes size={15}/>Point of Sale<span className="catalog-fast">FAST</span></button>
         <button className={`catalog-nav-item ${activeView === 'sales' ? 'active' : ''}`} onClick={() => setActiveView('sales')}><Tags size={15}/>Sales</button>
         <button className={`catalog-nav-item ${activeView === 'customers' ? 'active' : ''}`} onClick={() => setActiveView('customers')}><Users size={15}/>Customers</button>
@@ -445,6 +448,7 @@ export default function ProductCatalog() {
       {mountedDashboards.has('overview') && <DashboardPanel active={activeView === 'overview'}><DashboardOverview onOpenProducts={() => setActiveView('products')} onOpenInventory={() => setActiveView('inventory')} onOpenPurchases={() => setActiveView('purchases')} onOpenPOS={() => setActiveView('pos')} onOpenReports={() => setActiveView('reports')} onOpenExpenses={() => setActiveView('expenses')}/></DashboardPanel>}
       {mountedDashboards.has('inventory') && <DashboardPanel active={activeView === 'inventory'}><InventoryDashboard onOpenProducts={() => setActiveView('products')} onOpenPurchases={() => setActiveView('purchases')} onInventoryChanged={loadData}/></DashboardPanel>}
       {mountedDashboards.has('purchases') && <DashboardPanel active={activeView === 'purchases'}><PurchasesDashboard initialSupplierId={purchaseSupplierId} onInitialSupplierUsed={() => setPurchaseSupplierId(null)} onOpenInventory={() => setActiveView('inventory')} onOpenProducts={() => setActiveView('products')}/></DashboardPanel>}
+      {mountedDashboards.has('po-client') && <DashboardPanel active={activeView === 'po-client'}><PurchaseOrderClient/></DashboardPanel>}
       {mountedDashboards.has('pos') && <DashboardPanel active={activeView === 'pos'}><PosDashboard initialCustomerId={posCustomerId} onOpenProducts={() => setActiveView('products')} onOpenInventory={() => setActiveView('inventory')} onSaleCompleted={loadData}/></DashboardPanel>}
       {mountedDashboards.has('customers') && <DashboardPanel active={activeView === 'customers'}><CustomersDashboard onStartSale={(customerId) => { setPosCustomerId(customerId); setActiveView('pos'); }} onOpenSales={() => setActiveView('sales')}/></DashboardPanel>}
       {mountedDashboards.has('suppliers') && <DashboardPanel active={activeView === 'suppliers'}><SuppliersDashboard onOpenPurchases={(supplierId) => { setPurchaseSupplierId(supplierId); setActiveView('purchases'); }} onOpenInventory={() => setActiveView('inventory')}/></DashboardPanel>}

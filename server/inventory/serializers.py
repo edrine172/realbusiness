@@ -1,7 +1,7 @@
 from decimal import Decimal
 from django.utils import timezone
 from rest_framework import serializers
-from .models import Category, Customer, CustomerLedgerEntry, Expense, ExpenseBudget, Notification, PayrollLine, PayrollRun, Product, Purchase, PurchaseItem, Sale, SaleItem, StaffAttendance, StaffMember, StockMovement, Supplier, SupplierLedgerEntry
+from .models import BottleCustomerPO, BottleCustomerPOLine, BottleDelivery, BottleDeliveryLine, BottleProduct, Category, ClientMaterial, ClientMaterialPO, ClientMaterialReceipt, Customer, CustomerLedgerEntry, Expense, ExpenseBudget, Notification, PayrollLine, PayrollRun, Product, Purchase, PurchaseItem, Sale, SaleItem, StaffAttendance, StaffMember, StockMovement, Supplier, SupplierLedgerEntry
 
 
 class CategorySerializer(serializers.ModelSerializer):
@@ -214,6 +214,182 @@ class PurchaseSerializer(serializers.ModelSerializer):
         model = Purchase
         fields = ['id', 'reference', 'supplier', 'supplier_name', 'status', 'items', 'item_count', 'total', 'paid_amount', 'remaining_balance', 'payment_status', 'notes', 'expected_delivery', 'ordered_at', 'received_at']
         read_only_fields = ['id', 'reference', 'status', 'ordered_at', 'received_at']
+
+
+class BottleProductSerializer(serializers.ModelSerializer):
+    def validate_unit_price(self, value):
+        if value < 0:
+            raise serializers.ValidationError('Bottle price cannot be negative.')
+        return value
+
+    class Meta:
+        model = BottleProduct
+        fields = ['id', 'sku', 'name', 'category', 'quantity', 'unit_price', 'is_active', 'created_at']
+        read_only_fields = ['id', 'created_at']
+
+
+class BottleCustomerPOLineSerializer(serializers.ModelSerializer):
+    product = serializers.PrimaryKeyRelatedField(queryset=BottleProduct.objects.all())
+    product_name = serializers.CharField(source='product.name', read_only=True)
+    product_sku = serializers.CharField(source='product.sku', read_only=True)
+    category = serializers.CharField(source='product.category', read_only=True)
+    quantity = serializers.IntegerField(min_value=1)
+    unit_price = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal('0'))
+    delivered_quantity = serializers.SerializerMethodField()
+    remaining_quantity = serializers.SerializerMethodField()
+    line_total = serializers.SerializerMethodField()
+
+    def get_delivered_quantity(self, item):
+        return sum(row.quantity for row in item.delivery_lines.all())
+
+    def get_remaining_quantity(self, item):
+        return max(item.quantity - self.get_delivered_quantity(item), 0)
+
+    def get_line_total(self, item):
+        return str((item.quantity * item.unit_price).quantize(Decimal('0.01')))
+
+    class Meta:
+        model = BottleCustomerPOLine
+        fields = ['id', 'product', 'product_name', 'product_sku', 'category', 'quantity', 'unit_price', 'line_total', 'delivered_quantity', 'remaining_quantity']
+        read_only_fields = ['id']
+
+
+class BottleDeliveryRecordLineSerializer(serializers.ModelSerializer):
+    product_name = serializers.CharField(source='purchase_order_line.product.name', read_only=True)
+    product_sku = serializers.CharField(source='purchase_order_line.product.sku', read_only=True)
+
+    class Meta:
+        model = BottleDeliveryLine
+        fields = ['id', 'purchase_order_line', 'product_name', 'product_sku', 'quantity']
+        read_only_fields = fields
+
+
+class BottleDeliveryRecordSerializer(serializers.ModelSerializer):
+    items = BottleDeliveryRecordLineSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = BottleDelivery
+        fields = ['id', 'reference', 'notes', 'delivered_at', 'items']
+        read_only_fields = fields
+
+
+class BottleCustomerPOSerializer(serializers.ModelSerializer):
+    customer_name = serializers.CharField(source='customer.name', read_only=True)
+    items = BottleCustomerPOLineSerializer(many=True, allow_empty=False)
+    deliveries = BottleDeliveryRecordSerializer(many=True, read_only=True)
+    total = serializers.SerializerMethodField()
+    status = serializers.SerializerMethodField()
+
+    def get_total(self, purchase_order):
+        total = sum((item.quantity * item.unit_price for item in purchase_order.items.all()), Decimal('0'))
+        return str(total.quantize(Decimal('0.01')))
+
+    def get_status(self, purchase_order):
+        lines = list(purchase_order.items.all())
+        if lines and all(
+            sum(row.quantity for row in item.delivery_lines.all()) >= item.quantity
+            for item in lines
+        ):
+            return BottleCustomerPO.Status.COMPLETED
+        if any(row.quantity for item in lines for row in item.delivery_lines.all()):
+            return BottleCustomerPO.Status.PARTIAL
+        return BottleCustomerPO.Status.OPEN
+
+    def validate_items(self, items):
+        product_ids = [item['product'].id for item in items]
+        if len(product_ids) != len(set(product_ids)):
+            raise serializers.ValidationError('Each bottle catalog item can appear only once per PO.')
+        if any(not item['product'].is_active for item in items):
+            raise serializers.ValidationError('Inactive bottle catalog items cannot be ordered.')
+        return items
+
+    def create(self, validated_data):
+        from uuid import uuid4
+        items = validated_data.pop('items')
+        if not validated_data.get('reference'):
+            validated_data['reference'] = f"CBPO-{timezone.now().strftime('%Y%m%d')}-{uuid4().hex[:6].upper()}"
+        purchase_order = BottleCustomerPO.objects.create(**validated_data)
+        BottleCustomerPOLine.objects.bulk_create([
+            BottleCustomerPOLine(purchase_order=purchase_order, **item) for item in items
+        ])
+        return purchase_order
+
+    class Meta:
+        model = BottleCustomerPO
+        fields = ['id', 'reference', 'customer', 'customer_name', 'items', 'deliveries', 'total', 'status', 'expected_delivery', 'notes', 'ordered_at']
+        read_only_fields = ['id', 'status', 'ordered_at']
+        extra_kwargs = {'reference': {'required': False}}
+
+
+class BottleDeliveryLineInputSerializer(serializers.Serializer):
+    purchase_order_line = serializers.IntegerField(min_value=1)
+    quantity = serializers.IntegerField(min_value=1)
+
+
+class BottleDeliverySerializer(serializers.Serializer):
+    items = BottleDeliveryLineInputSerializer(many=True, allow_empty=False)
+    notes = serializers.CharField(max_length=240, required=False, allow_blank=True)
+
+    def validate_items(self, items):
+        line_ids = [item['purchase_order_line'] for item in items]
+        if len(line_ids) != len(set(line_ids)):
+            raise serializers.ValidationError('Each PO line can only be included once per delivery.')
+        return items
+
+
+class ClientMaterialSerializer(serializers.ModelSerializer):
+    name = serializers.CharField(source='get_material_type_display', read_only=True)
+
+    class Meta:
+        model = ClientMaterial
+        fields = ['id', 'material_type', 'name', 'quantity', 'unit', 'unit_price']
+        read_only_fields = fields
+
+
+class ClientMaterialReceiptSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ClientMaterialReceipt
+        fields = ['id', 'reference', 'quantity', 'notes', 'received_at']
+        read_only_fields = ['id', 'received_at']
+
+
+class ClientMaterialPOSerializer(serializers.ModelSerializer):
+    quantity = serializers.DecimalField(max_digits=14, decimal_places=2, min_value=Decimal('0.01'))
+    unit_price = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal('0'))
+    customer_name = serializers.CharField(source='customer.name', read_only=True)
+    material_name = serializers.CharField(source='material.get_material_type_display', read_only=True)
+    material_unit = serializers.CharField(source='material.unit', read_only=True)
+    receipts = ClientMaterialReceiptSerializer(many=True, read_only=True)
+    received_quantity = serializers.SerializerMethodField()
+    remaining_quantity = serializers.SerializerMethodField()
+    total = serializers.SerializerMethodField()
+    status = serializers.SerializerMethodField()
+
+    def get_received_quantity(self, purchase_order):
+        return sum((receipt.quantity for receipt in purchase_order.receipts.all()), Decimal('0'))
+
+    def get_remaining_quantity(self, purchase_order):
+        return max(purchase_order.quantity - self.get_received_quantity(purchase_order), Decimal('0'))
+
+    def get_total(self, purchase_order):
+        return str((purchase_order.quantity * purchase_order.unit_price).quantize(Decimal('0.01')))
+
+    def get_status(self, purchase_order):
+        received = self.get_received_quantity(purchase_order)
+        if received >= purchase_order.quantity:
+            return ClientMaterialPO.Status.COMPLETED
+        return ClientMaterialPO.Status.PARTIAL if received > 0 else ClientMaterialPO.Status.OPEN
+
+    class Meta:
+        model = ClientMaterialPO
+        fields = ['id', 'reference', 'customer', 'customer_name', 'material', 'material_name', 'material_unit', 'quantity', 'unit_price', 'total', 'received_quantity', 'remaining_quantity', 'status', 'expected_delivery', 'notes', 'ordered_at', 'receipts']
+        read_only_fields = ['id', 'status', 'ordered_at']
+        extra_kwargs = {'reference': {'required': False}}
+
+
+class ClientMaterialReceiptInputSerializer(serializers.Serializer):
+    quantity = serializers.DecimalField(max_digits=14, decimal_places=2, min_value=Decimal('0.01'))
+    notes = serializers.CharField(max_length=240, required=False, allow_blank=True)
 
 
 class SaleItemSerializer(serializers.ModelSerializer):

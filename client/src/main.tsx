@@ -9,6 +9,7 @@ import './overview.css';
 import './overview-flow.css';
 import './inventory.css';
 import './purchases.css';
+import './po-client.css';
 import './pos.css';
 import './pos-cart-quantity.css';
 import './reports.css';

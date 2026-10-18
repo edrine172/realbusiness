@@ -17,8 +17,8 @@ from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.exceptions import PermissionDenied, ValidationError
-from .models import Category, Customer, CustomerLedgerEntry, Expense, ExpenseBudget, Notification, PayrollLine, PayrollRun, Product, Purchase, PurchaseItem, Sale, SaleItem, SecurityAuditEvent, StaffAttendance, StaffMember, StockMovement, Supplier, SupplierLedgerEntry, SystemSetting
-from .serializers import CategorySerializer, CustomerLedgerEntrySerializer, CustomerPaymentSerializer, CustomerSerializer, ExpenseBudgetSerializer, ExpenseSerializer, NotificationSerializer, PayrollRunSerializer, ProductSerializer, PurchaseSerializer, SaleCheckoutSerializer, SaleSerializer, StaffAttendanceInputSerializer, StaffAttendanceSerializer, StaffMemberSerializer, StockAdjustmentSerializer, StockMovementSerializer, SupplierLedgerEntrySerializer, SupplierPaymentSerializer, SupplierSerializer
+from .models import BottleCustomerPO, BottleCustomerPOLine, BottleDelivery, BottleDeliveryLine, BottleProduct, Category, ClientMaterial, ClientMaterialPO, ClientMaterialReceipt, Customer, CustomerLedgerEntry, Expense, ExpenseBudget, Notification, PayrollLine, PayrollRun, Product, Purchase, PurchaseItem, Sale, SaleItem, SecurityAuditEvent, StaffAttendance, StaffMember, StockMovement, Supplier, SupplierLedgerEntry, SystemSetting
+from .serializers import BottleCustomerPOSerializer, BottleDeliverySerializer, BottleProductSerializer, CategorySerializer, ClientMaterialPOSerializer, ClientMaterialReceiptInputSerializer, ClientMaterialSerializer, CustomerLedgerEntrySerializer, CustomerPaymentSerializer, CustomerSerializer, ExpenseBudgetSerializer, ExpenseSerializer, NotificationSerializer, PayrollRunSerializer, ProductSerializer, PurchaseSerializer, SaleCheckoutSerializer, SaleSerializer, StaffAttendanceInputSerializer, StaffAttendanceSerializer, StaffMemberSerializer, StockAdjustmentSerializer, StockMovementSerializer, SupplierLedgerEntrySerializer, SupplierPaymentSerializer, SupplierSerializer
 from .date_ranges import day_range
 from .reports import build_report_summary
 from .permissions import RoleModelPermissions
@@ -988,6 +988,114 @@ class PurchaseViewSet(viewsets.ModelViewSet):
             'purchase': self.get_serializer(purchase).data,
             'ledger_entry': SupplierLedgerEntrySerializer(entry).data,
         }, status=201)
+
+
+class BottleProductViewSet(viewsets.ModelViewSet):
+    queryset = BottleProduct.objects.all()
+    serializer_class = BottleProductSerializer
+    http_method_names = ['get', 'post', 'patch', 'head', 'options']
+
+
+class BottleCustomerPOViewSet(viewsets.ModelViewSet):
+    queryset = BottleCustomerPO.objects.select_related('customer').prefetch_related(
+        'items__product', 'items__delivery_lines',
+    ).all()
+    serializer_class = BottleCustomerPOSerializer
+    http_method_names = ['get', 'post', 'head', 'options']
+
+    @action(detail=True, methods=['post'])
+    @transaction.atomic
+    def deliver(self, request, pk=None):
+        from uuid import uuid4
+
+        serializer = BottleDeliverySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        purchase_order = BottleCustomerPO.objects.select_for_update().get(pk=pk)
+        lines_by_id = {
+            line.id: line for line in BottleCustomerPOLine.objects.select_for_update()
+            .filter(purchase_order=purchase_order)
+            .order_by('product_id')
+        }
+        delivery_items = serializer.validated_data['items']
+        prepared = []
+        for delivery_item in delivery_items:
+            line = lines_by_id.get(delivery_item['purchase_order_line'])
+            if line is None:
+                raise ValidationError({'items': 'A delivery line does not belong to this customer PO.'})
+            delivered = BottleDeliveryLine.objects.filter(purchase_order_line=line).aggregate(
+                total=Sum('quantity'),
+            )['total'] or 0
+            remaining = line.quantity - delivered
+            if delivery_item['quantity'] > remaining:
+                raise ValidationError({
+                    'items': f'Only {remaining} units remain for {line.product.sku} on this PO.',
+                })
+            prepared.append((line, delivery_item['quantity']))
+
+        product_ids = sorted({line.product_id for line, _ in prepared})
+        products = {
+            product.id: product for product in BottleProduct.objects.select_for_update()
+            .filter(pk__in=product_ids).order_by('id')
+        }
+        for line, quantity in prepared:
+            product = products[line.product_id]
+            if product.quantity < quantity:
+                raise ValidationError({
+                    'items': f'Only {product.quantity} units of {product.sku} are in bottle inventory.',
+                })
+
+        delivery = BottleDelivery.objects.create(
+            reference=f"BD-{timezone.now().strftime('%Y%m%d')}-{uuid4().hex[:6].upper()}",
+            purchase_order=purchase_order,
+            notes=serializer.validated_data.get('notes', '').strip(),
+        )
+        for line, quantity in prepared:
+            product = products[line.product_id]
+            product.quantity -= quantity
+            product.save(update_fields=['quantity'])
+            BottleDeliveryLine.objects.create(
+                delivery=delivery,
+                purchase_order_line=line,
+                quantity=quantity,
+            )
+
+        return Response(self.get_serializer(purchase_order).data)
+
+
+class ClientMaterialViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = ClientMaterial.objects.all()
+    serializer_class = ClientMaterialSerializer
+
+
+class ClientMaterialPOViewSet(viewsets.ModelViewSet):
+    queryset = ClientMaterialPO.objects.select_related('customer', 'material').prefetch_related('receipts').all()
+    serializer_class = ClientMaterialPOSerializer
+    http_method_names = ['get', 'post', 'head', 'options']
+
+    @action(detail=True, methods=['post'])
+    @transaction.atomic
+    def receive(self, request, pk=None):
+        from uuid import uuid4
+
+        serializer = ClientMaterialReceiptInputSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        purchase_order = ClientMaterialPO.objects.select_for_update().select_related('material').get(pk=pk)
+        received = purchase_order.receipts.aggregate(total=Sum('quantity'))['total'] or Decimal('0')
+        remaining = purchase_order.quantity - received
+        quantity = serializer.validated_data['quantity']
+        if quantity > remaining:
+            raise ValidationError({'quantity': f'Only {remaining} {purchase_order.material.unit} remain on this PO.'})
+
+        material = ClientMaterial.objects.select_for_update().get(pk=purchase_order.material_id)
+        material.quantity += quantity
+        material.save(update_fields=['quantity'])
+        ClientMaterialReceipt.objects.create(
+            reference=f"CMR-{timezone.now().strftime('%Y%m%d')}-{uuid4().hex[:6].upper()}",
+            purchase_order=purchase_order,
+            quantity=quantity,
+            notes=serializer.validated_data.get('notes', '').strip(),
+        )
+        return Response(self.get_serializer(purchase_order).data)
 
 
 class SaleViewSet(viewsets.ReadOnlyModelViewSet):

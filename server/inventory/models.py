@@ -155,6 +155,133 @@ class PurchaseItem(models.Model):
         return f'{self.quantity} × {self.product.sku} for {self.purchase.reference}'
 
 
+class BottleProduct(models.Model):
+    class Category(models.TextChoices):
+        UGANDA_WARAGI = 'UGANDA WARAGI', 'UGANDA WARAGI'
+        GUARANTEE = 'GUARANTEE', 'GUARANTEE'
+
+    sku = models.CharField(max_length=64, unique=True)
+    name = models.CharField(max_length=180)
+    category = models.CharField(max_length=24, choices=Category.choices)
+    quantity = models.PositiveIntegerField(default=0)
+    unit_price = models.DecimalField(max_digits=12, decimal_places=2)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['category', 'name']
+
+    def __str__(self):
+        return f'{self.sku} — {self.name}'
+
+
+class BottleCustomerPO(models.Model):
+    class Status(models.TextChoices):
+        OPEN = 'open', 'Open'
+        PARTIAL = 'partial', 'Partially delivered'
+        COMPLETED = 'completed', 'Completed'
+
+    reference = models.CharField(max_length=40, unique=True)
+    customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name='bottle_purchase_orders')
+    expected_delivery = models.DateField(null=True, blank=True)
+    notes = models.CharField(max_length=240, blank=True)
+    ordered_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-ordered_at']
+
+    def __str__(self):
+        return self.reference
+
+
+class BottleCustomerPOLine(models.Model):
+    purchase_order = models.ForeignKey(BottleCustomerPO, on_delete=models.CASCADE, related_name='items')
+    product = models.ForeignKey(BottleProduct, on_delete=models.PROTECT, related_name='purchase_order_lines')
+    quantity = models.PositiveIntegerField()
+    unit_price = models.DecimalField(max_digits=12, decimal_places=2)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['purchase_order', 'product'], name='unique_bottle_product_per_customer_po')]
+
+    def __str__(self):
+        return f'{self.quantity} × {self.product.sku} for {self.purchase_order.reference}'
+
+
+class BottleDelivery(models.Model):
+    reference = models.CharField(max_length=40, unique=True)
+    purchase_order = models.ForeignKey(BottleCustomerPO, on_delete=models.PROTECT, related_name='deliveries')
+    notes = models.CharField(max_length=240, blank=True)
+    delivered_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-delivered_at']
+
+    def __str__(self):
+        return self.reference
+
+
+class BottleDeliveryLine(models.Model):
+    delivery = models.ForeignKey(BottleDelivery, on_delete=models.CASCADE, related_name='items')
+    purchase_order_line = models.ForeignKey(BottleCustomerPOLine, on_delete=models.PROTECT, related_name='delivery_lines')
+    quantity = models.PositiveIntegerField()
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['delivery', 'purchase_order_line'], name='unique_bottle_po_line_per_delivery')]
+
+
+class ClientMaterial(models.Model):
+    class MaterialType(models.TextChoices):
+        SPENT_YEAST = 'spent_yeast', 'Spent Yeast'
+        ASH = 'ash', 'Ash'
+
+    material_type = models.CharField(max_length=20, choices=MaterialType.choices, unique=True)
+    quantity = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    unit = models.CharField(max_length=16, default='kg')
+    unit_price = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+
+    class Meta:
+        ordering = ['material_type']
+
+    def __str__(self):
+        return self.get_material_type_display()
+
+
+class ClientMaterialPO(models.Model):
+    class Status(models.TextChoices):
+        OPEN = 'open', 'Open'
+        PARTIAL = 'partial', 'Partially received'
+        COMPLETED = 'completed', 'Completed'
+
+    reference = models.CharField(max_length=40, unique=True)
+    customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name='material_purchase_orders')
+    material = models.ForeignKey(ClientMaterial, on_delete=models.PROTECT, related_name='purchase_orders')
+    quantity = models.DecimalField(max_digits=14, decimal_places=2)
+    unit_price = models.DecimalField(max_digits=12, decimal_places=2)
+    expected_delivery = models.DateField(null=True, blank=True)
+    notes = models.CharField(max_length=240, blank=True)
+    ordered_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-ordered_at']
+
+    def __str__(self):
+        return self.reference
+
+
+class ClientMaterialReceipt(models.Model):
+    reference = models.CharField(max_length=40, unique=True)
+    purchase_order = models.ForeignKey(ClientMaterialPO, on_delete=models.PROTECT, related_name='receipts')
+    quantity = models.DecimalField(max_digits=14, decimal_places=2)
+    notes = models.CharField(max_length=240, blank=True)
+    received_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-received_at']
+
+    def __str__(self):
+        return self.reference
+
+
 class Sale(models.Model):
     class PaymentMethod(models.TextChoices):
         CASH = 'cash', 'Cash'
@@ -286,6 +413,7 @@ class SecurityAuditEvent(models.Model):
 
     class Meta:
         ordering = ['-created_at']
+        permissions = [('manage_access', 'Can manage workspace access')]
 
     def __str__(self):
         return f'{self.action} · {self.target_type} {self.target_id}'

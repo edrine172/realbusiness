@@ -14,7 +14,7 @@ from django.test import Client
 from django.utils import timezone
 from rest_framework.test import APITestCase
 
-from .models import Category, Customer, CustomerLedgerEntry, Expense, ExpenseBudget, Notification, PayrollLine, PayrollRun, Product, Purchase, PurchaseItem, Sale, SaleItem, SecurityAuditEvent, StaffAttendance, StaffMember, StockMovement, Supplier, SupplierLedgerEntry, SystemSetting
+from .models import BottleCustomerPO, BottleProduct, ClientMaterial, ClientMaterialPO, Category, Customer, CustomerLedgerEntry, Expense, ExpenseBudget, Notification, PayrollLine, PayrollRun, Product, Purchase, PurchaseItem, Sale, SaleItem, SecurityAuditEvent, StaffAttendance, StaffMember, StockMovement, Supplier, SupplierLedgerEntry, SystemSetting
 
 
 class AdminAPITestCase(APITestCase):
@@ -541,6 +541,132 @@ class InventoryAdjustmentTests(AdminAPITestCase):
         self.product.refresh_from_db()
         self.assertEqual(self.product.quantity, 10)
         self.assertFalse(StockMovement.objects.exists())
+
+
+class CustomerPOClientWorkflowTests(AdminAPITestCase):
+    def setUp(self):
+        super().setUp()
+        self.customer = Customer.objects.create(customer_code='CPO-001', name='Bottle client')
+        self.bottle = BottleProduct.objects.create(
+            sku='BOTTLE-001',
+            name='Waragi 750ml',
+            category=BottleProduct.Category.UGANDA_WARAGI,
+            quantity=20,
+            unit_price='150.00',
+        )
+        self.material, _ = ClientMaterial.objects.get_or_create(
+            material_type=ClientMaterial.MaterialType.SPENT_YEAST,
+            defaults={'unit': 'kg', 'unit_price': '30.00'},
+        )
+
+    def test_bottle_po_supports_partial_deliveries_and_completes_on_fulfillment(self):
+        created = self.client.post('/api/po-client/bottle-orders/', {
+            'reference': 'CLIENT-BTL-001',
+            'customer': self.customer.id,
+            'items': [{'product': self.bottle.id, 'quantity': 12, 'unit_price': '150.00'}],
+        }, format='json')
+
+        self.assertEqual(created.status_code, 201)
+        self.assertEqual(created.data['total'], '1800.00')
+        self.assertEqual(created.data['status'], BottleCustomerPO.Status.OPEN)
+        line_id = created.data['items'][0]['id']
+
+        first_delivery = self.client.post(
+            f"/api/po-client/bottle-orders/{created.data['id']}/deliver/",
+            {'items': [{'purchase_order_line': line_id, 'quantity': 5}]},
+            format='json',
+        )
+        self.assertEqual(first_delivery.status_code, 200)
+        self.assertEqual(first_delivery.data['status'], BottleCustomerPO.Status.PARTIAL)
+        self.assertEqual(first_delivery.data['items'][0]['delivered_quantity'], 5)
+        self.assertEqual(first_delivery.data['items'][0]['remaining_quantity'], 7)
+        self.assertEqual(len(first_delivery.data['deliveries']), 1)
+        self.assertEqual(first_delivery.data['deliveries'][0]['items'][0]['quantity'], 5)
+        self.bottle.refresh_from_db()
+        self.assertEqual(self.bottle.quantity, 15)
+
+        final_delivery = self.client.post(
+            f"/api/po-client/bottle-orders/{created.data['id']}/deliver/",
+            {'items': [{'purchase_order_line': line_id, 'quantity': 7}]},
+            format='json',
+        )
+        self.assertEqual(final_delivery.status_code, 200)
+        self.assertEqual(final_delivery.data['status'], BottleCustomerPO.Status.COMPLETED)
+        self.bottle.refresh_from_db()
+        self.assertEqual(self.bottle.quantity, 8)
+
+    def test_bottle_delivery_rejects_overdelivery_and_insufficient_stock_atomically(self):
+        created = self.client.post('/api/po-client/bottle-orders/', {
+            'reference': 'CLIENT-BTL-002',
+            'customer': self.customer.id,
+            'items': [{'product': self.bottle.id, 'quantity': 25, 'unit_price': '150.00'}],
+        }, format='json')
+        line_id = created.data['items'][0]['id']
+
+        over_stock = self.client.post(
+            f"/api/po-client/bottle-orders/{created.data['id']}/deliver/",
+            {'items': [{'purchase_order_line': line_id, 'quantity': 21}]},
+            format='json',
+        )
+        self.assertEqual(over_stock.status_code, 400)
+        self.bottle.refresh_from_db()
+        self.assertEqual(self.bottle.quantity, 20)
+
+        delivered = self.client.post(
+            f"/api/po-client/bottle-orders/{created.data['id']}/deliver/",
+            {'items': [{'purchase_order_line': line_id, 'quantity': 12}]},
+            format='json',
+        )
+        self.assertEqual(delivered.status_code, 200)
+        over_order = self.client.post(
+            f"/api/po-client/bottle-orders/{created.data['id']}/deliver/",
+            {'items': [{'purchase_order_line': line_id, 'quantity': 14}]},
+            format='json',
+        )
+        self.assertEqual(over_order.status_code, 400)
+        self.bottle.refresh_from_db()
+        self.assertEqual(self.bottle.quantity, 8)
+
+    def test_material_po_tracks_its_own_partial_receipts_and_rate(self):
+        self.material.unit_price = Decimal('30.00')
+        self.material.save(update_fields=['unit_price'])
+        created = self.client.post('/api/po-client/material-orders/', {
+            'reference': 'CLIENT-SY-001',
+            'customer': self.customer.id,
+            'material': self.material.id,
+            'quantity': '100.00',
+            'unit_price': '30.00',
+        }, format='json')
+        self.assertEqual(created.status_code, 201)
+        self.assertEqual(created.data['total'], '3000.00')
+        self.assertEqual(created.data['status'], ClientMaterialPO.Status.OPEN)
+
+        first_receipt = self.client.post(
+            f"/api/po-client/material-orders/{created.data['id']}/receive/",
+            {'quantity': '35.00'},
+            format='json',
+        )
+        self.assertEqual(first_receipt.status_code, 200)
+        self.assertEqual(first_receipt.data['status'], ClientMaterialPO.Status.PARTIAL)
+        self.assertEqual(first_receipt.data['remaining_quantity'], Decimal('65.00'))
+        self.assertEqual(len(first_receipt.data['receipts']), 1)
+
+        excessive_receipt = self.client.post(
+            f"/api/po-client/material-orders/{created.data['id']}/receive/",
+            {'quantity': '66.00'},
+            format='json',
+        )
+        self.assertEqual(excessive_receipt.status_code, 400)
+
+        final_receipt = self.client.post(
+            f"/api/po-client/material-orders/{created.data['id']}/receive/",
+            {'quantity': '65.00'},
+            format='json',
+        )
+        self.assertEqual(final_receipt.status_code, 200)
+        self.assertEqual(final_receipt.data['status'], ClientMaterialPO.Status.COMPLETED)
+        self.material.refresh_from_db()
+        self.assertEqual(self.material.quantity, Decimal('100.00'))
 
 
 class PurchaseWorkflowTests(AdminAPITestCase):

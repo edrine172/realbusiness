@@ -88,7 +88,7 @@ export interface SecurityAuditEvent {
   created_at: string;
 }
 
-export type NotificationDashboard = 'overview' | 'products' | 'inventory' | 'purchases' | 'pos' | 'sales' | 'reports' | 'customers' | 'suppliers' | 'expenses' | 'users' | 'settings' | 'staff';
+export type NotificationDashboard = 'overview' | 'products' | 'inventory' | 'purchases' | 'po-client' | 'pos' | 'sales' | 'reports' | 'customers' | 'suppliers' | 'expenses' | 'users' | 'settings' | 'staff';
 export type NotificationCategory = 'stock' | 'procurement' | 'billing' | 'operations';
 
 export interface AppNotification {
@@ -351,6 +351,89 @@ export interface PurchaseSummary {
   open_value: string;
   spent_this_month: string;
   recent_purchases: Purchase[];
+}
+
+export interface BottleProduct {
+  id: number;
+  sku: string;
+  name: string;
+  category: 'UGANDA WARAGI' | 'GUARANTEE';
+  quantity: number;
+  unit_price: string;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface BottleCustomerPOLine {
+  id: number;
+  product: number;
+  product_name: string;
+  product_sku: string;
+  category: BottleProduct['category'];
+  quantity: number;
+  unit_price: string;
+  line_total: string;
+  delivered_quantity: number;
+  remaining_quantity: number;
+}
+
+export interface BottleCustomerPO {
+  id: number;
+  reference: string;
+  customer: number;
+  customer_name: string;
+  items: BottleCustomerPOLine[];
+  deliveries: BottleCustomerDelivery[];
+  total: string;
+  status: 'open' | 'partial' | 'completed';
+  expected_delivery: string | null;
+  notes: string;
+  ordered_at: string;
+}
+
+export interface BottleCustomerDelivery {
+  id: number;
+  reference: string;
+  notes: string;
+  delivered_at: string;
+  items: Array<{ id: number; purchase_order_line: number; product_name: string; product_sku: string; quantity: number }>;
+}
+
+export interface ClientMaterial {
+  id: number;
+  material_type: 'spent_yeast' | 'ash';
+  name: string;
+  quantity: string;
+  unit: string;
+  unit_price: string;
+}
+
+export interface ClientMaterialReceipt {
+  id: number;
+  reference: string;
+  quantity: string;
+  notes: string;
+  received_at: string;
+}
+
+export interface ClientMaterialPO {
+  id: number;
+  reference: string;
+  customer: number;
+  customer_name: string;
+  material: number;
+  material_name: string;
+  material_unit: string;
+  quantity: string;
+  unit_price: string;
+  total: string;
+  received_quantity: string;
+  remaining_quantity: string;
+  status: 'open' | 'partial' | 'completed';
+  expected_delivery: string | null;
+  notes: string;
+  ordered_at: string;
+  receipts: ClientMaterialReceipt[];
 }
 
 export interface SaleLine {
@@ -730,6 +813,20 @@ export const api = {
     request<Purchase>('/purchases/', { method: 'POST', body: JSON.stringify(purchase) }),
   receivePurchase: (id: number) =>
     request<Purchase>(`/purchases/${id}/receive/`, { method: 'POST', body: JSON.stringify({}) }),
+  bottleProducts: () => request<BottleProduct[]>('/po-client/bottle-products/'),
+  createBottleProduct: (product: Pick<BottleProduct, 'sku' | 'name' | 'category' | 'quantity' | 'unit_price'>) =>
+    request<BottleProduct>('/po-client/bottle-products/', { method: 'POST', body: JSON.stringify(product) }),
+  bottleOrders: () => request<BottleCustomerPO[]>('/po-client/bottle-orders/'),
+  createBottleOrder: (order: { reference: string; customer: number; expected_delivery?: string | null; notes?: string; items: Array<{ product: number; quantity: number; unit_price: string }> }) =>
+    request<BottleCustomerPO>('/po-client/bottle-orders/', { method: 'POST', body: JSON.stringify(order) }),
+  deliverBottleOrder: (id: number, delivery: { items: Array<{ purchase_order_line: number; quantity: number }>; notes?: string }) =>
+    request<BottleCustomerPO>(`/po-client/bottle-orders/${id}/deliver/`, { method: 'POST', body: JSON.stringify(delivery) }),
+  clientMaterials: () => request<ClientMaterial[]>('/po-client/materials/'),
+  clientMaterialOrders: () => request<ClientMaterialPO[]>('/po-client/material-orders/'),
+  createClientMaterialOrder: (order: { reference: string; customer: number; material: number; quantity: string; unit_price: string; expected_delivery?: string | null; notes?: string }) =>
+    request<ClientMaterialPO>('/po-client/material-orders/', { method: 'POST', body: JSON.stringify(order) }),
+  receiveClientMaterialOrder: (id: number, receipt: { quantity: string; notes?: string }) =>
+    request<ClientMaterialPO>(`/po-client/material-orders/${id}/receive/`, { method: 'POST', body: JSON.stringify(receipt) }),
   payPurchase: (id: number, payment: { amount: string; reference?: string; note?: string }) =>
     request<{ purchase: Purchase; ledger_entry: SupplierLedgerEntry }>(`/purchases/${id}/payments/`, {
       method: 'POST',
