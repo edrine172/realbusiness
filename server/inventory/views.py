@@ -24,9 +24,11 @@ from .reports import build_report_summary
 from .permissions import RoleModelPermissions
 
 DAILY_TARGET_UNITS = 15
-DAILY_TARGET_MET_WAGE = Decimal('8000.00')
-DAILY_TARGET_MISSED_WAGE = Decimal('7000.00')
-SUNDAY_DAILY_WAGE = Decimal('5000.00')
+SUNDAY_TARGET_UNITS = 10
+DAILY_TARGET_MET_WAGE = Decimal('7000.00')
+DAILY_TARGET_MISSED_WAGE = Decimal('6000.00')
+SUNDAY_TARGET_MET_WAGE = Decimal('5000.00')
+SUNDAY_TARGET_MISSED_WAGE = Decimal('4000.00')
 
 SETTINGS_DEFAULTS = {
     'organization': {
@@ -618,7 +620,7 @@ class StaffAttendanceViewSet(viewsets.ViewSet):
             daily_wage = Decimal('0.00')
             if attended and worker.pay_basis == StaffMember.PayBasis.DAILY:
                 if attendance_date.weekday() == 6:
-                    daily_wage = SUNDAY_DAILY_WAGE
+                    daily_wage = SUNDAY_TARGET_MET_WAGE if output_quantity >= SUNDAY_TARGET_UNITS else SUNDAY_TARGET_MISSED_WAGE
                 elif output_quantity >= DAILY_TARGET_UNITS:
                     daily_wage = DAILY_TARGET_MET_WAGE
                 else:

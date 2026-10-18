@@ -308,39 +308,46 @@ class StaffPayrollTests(APITestCase):
         self.assertEqual(second_day.status_code, 200)
         sunday = self.client.post('/api/staff/attendance/record_day/', {
             'date': '2025-02-09',
-            'records': [{'worker': worker_id, 'attended': True, 'output_quantity': 25}],
+            'records': [{'worker': worker_id, 'attended': True, 'output_quantity': 9}],
         }, format='json')
         self.assertEqual(sunday.status_code, 200)
+        second_sunday = self.client.post('/api/staff/attendance/record_day/', {
+            'date': '2025-02-16',
+            'records': [{'worker': worker_id, 'attended': True, 'output_quantity': 10}],
+        }, format='json')
+        self.assertEqual(second_sunday.status_code, 200)
 
         daily_records = {record['date']: record for record in self.client.get('/api/staff/attendance/?period=2025-02').data}
-        self.assertEqual(daily_records['2025-02-03']['daily_wage'], '8000.00')
-        self.assertEqual(daily_records['2025-02-04']['daily_wage'], '7000.00')
-        self.assertEqual(daily_records['2025-02-09']['daily_wage'], '5000.00')
+        self.assertEqual(daily_records['2025-02-03']['daily_wage'], '7000.00')
+        self.assertEqual(daily_records['2025-02-04']['daily_wage'], '6000.00')
+        self.assertEqual(daily_records['2025-02-09']['daily_wage'], '4000.00')
+        self.assertEqual(daily_records['2025-02-16']['daily_wage'], '5000.00')
         self.assertEqual(daily_records['2025-02-03']['output_quantity'], 15)
+        self.assertEqual(daily_records['2025-02-16']['output_quantity'], 10)
 
         month_records = self.client.get('/api/staff/attendance/?period=2025-02')
         self.assertEqual(month_records.status_code, 200)
-        self.assertEqual(len(month_records.data), 3)
-        self.assertEqual({record['date'] for record in month_records.data}, {'2025-02-03', '2025-02-04', '2025-02-09'})
+        self.assertEqual(len(month_records.data), 4)
+        self.assertEqual({record['date'] for record in month_records.data}, {'2025-02-03', '2025-02-04', '2025-02-09', '2025-02-16'})
 
         dashboard = self.client.get('/api/staff/dashboard/?period=2025-02').data
-        self.assertEqual(dashboard['workers'][0]['period_days_worked'], 3)
-        self.assertEqual(dashboard['workers'][0]['period_gross'], Decimal('20000.00'))
-        self.assertEqual(dashboard['summary']['gross_total'], Decimal('20000.00'))
+        self.assertEqual(dashboard['workers'][0]['period_days_worked'], 4)
+        self.assertEqual(dashboard['workers'][0]['period_gross'], Decimal('22000.00'))
+        self.assertEqual(dashboard['summary']['gross_total'], Decimal('22000.00'))
 
         generated = self.client.post('/api/staff/payroll-runs/generate/', {'period': '2025-02'}, format='json')
         self.assertEqual(generated.status_code, 201)
-        self.assertEqual(generated.data['gross_total'], '20000.00')
-        self.assertEqual(generated.data['lines'][0]['days_worked'], 3)
-        self.assertEqual(generated.data['lines'][0]['withholding'], '2000.00')
+        self.assertEqual(generated.data['gross_total'], '22000.00')
+        self.assertEqual(generated.data['lines'][0]['days_worked'], 4)
+        self.assertEqual(generated.data['lines'][0]['withholding'], '2200.00')
         self.assertEqual(generated.data['lines'][0]['benefits'], '5000.00')
-        self.assertEqual(generated.data['lines'][0]['net_pay'], '13000.00')
+        self.assertEqual(generated.data['lines'][0]['net_pay'], '14800.00')
         locked = self.client.post('/api/staff/attendance/record_day/', {
             'date': '2025-02-03',
             'records': [{'worker': worker_id, 'attended': True, 'output_quantity': 100}],
         }, format='json')
         self.assertEqual(locked.status_code, 400)
-        self.assertEqual(StaffAttendance.objects.get(worker_id=worker_id, date='2025-02-03').daily_wage, Decimal('8000.00'))
+        self.assertEqual(StaffAttendance.objects.get(worker_id=worker_id, date='2025-02-03').daily_wage, Decimal('7000.00'))
 
     def test_attendance_can_be_recorded_for_monthly_worker_without_daily_wage(self):
         created = self.create_worker()
