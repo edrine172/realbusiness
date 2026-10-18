@@ -1,5 +1,6 @@
 from decimal import Decimal
 from django.utils import timezone
+from django.utils.text import slugify
 from rest_framework import serializers
 from .models import BottleCustomerPO, BottleCustomerPOLine, BottleDelivery, BottleDeliveryLine, BottleProduct, Category, ClientMaterial, ClientMaterialPO, ClientMaterialReceipt, Customer, CustomerLedgerEntry, Expense, ExpenseBudget, Notification, PayrollLine, PayrollRun, Product, Purchase, PurchaseItem, Sale, SaleItem, StaffAttendance, StaffMember, StockMovement, Supplier, SupplierLedgerEntry
 
@@ -224,7 +225,7 @@ class BottleProductSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = BottleProduct
-        fields = ['id', 'sku', 'name', 'category', 'quantity', 'unit_price', 'is_active', 'created_at']
+        fields = ['id', 'sku', 'name', 'category', 'unit', 'quantity', 'unit_price', 'is_active', 'created_at']
         read_only_fields = ['id', 'created_at']
 
 
@@ -233,6 +234,7 @@ class BottleCustomerPOLineSerializer(serializers.ModelSerializer):
     product_name = serializers.CharField(source='product.name', read_only=True)
     product_sku = serializers.CharField(source='product.sku', read_only=True)
     category = serializers.CharField(source='product.category', read_only=True)
+    unit = serializers.CharField(source='product.unit', read_only=True)
     quantity = serializers.IntegerField(min_value=1)
     unit_price = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal('0'))
     delivered_quantity = serializers.SerializerMethodField()
@@ -250,17 +252,18 @@ class BottleCustomerPOLineSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = BottleCustomerPOLine
-        fields = ['id', 'product', 'product_name', 'product_sku', 'category', 'quantity', 'unit_price', 'line_total', 'delivered_quantity', 'remaining_quantity']
+        fields = ['id', 'product', 'product_name', 'product_sku', 'category', 'unit', 'quantity', 'unit_price', 'line_total', 'delivered_quantity', 'remaining_quantity']
         read_only_fields = ['id']
 
 
 class BottleDeliveryRecordLineSerializer(serializers.ModelSerializer):
     product_name = serializers.CharField(source='purchase_order_line.product.name', read_only=True)
     product_sku = serializers.CharField(source='purchase_order_line.product.sku', read_only=True)
+    unit = serializers.CharField(source='purchase_order_line.product.unit', read_only=True)
 
     class Meta:
         model = BottleDeliveryLine
-        fields = ['id', 'purchase_order_line', 'product_name', 'product_sku', 'quantity']
+        fields = ['id', 'purchase_order_line', 'product_name', 'product_sku', 'unit', 'quantity']
         read_only_fields = fields
 
 
@@ -338,12 +341,34 @@ class BottleDeliverySerializer(serializers.Serializer):
 
 
 class ClientMaterialSerializer(serializers.ModelSerializer):
-    name = serializers.CharField(source='get_material_type_display', read_only=True)
+    material_type = serializers.CharField(read_only=True)
+    name = serializers.CharField(max_length=120)
+    quantity = serializers.DecimalField(max_digits=14, decimal_places=2, read_only=True)
+    unit_price = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal('0'))
+
+    def validate_name(self, value):
+        name = value.strip()
+        if not name:
+            raise serializers.ValidationError('Enter a product name.')
+        return name
+
+    def create(self, validated_data):
+        key = slugify(validated_data['name'])[:64]
+        if not key:
+            raise serializers.ValidationError({'name': 'The product name must contain letters or numbers.'})
+        if ClientMaterial.objects.filter(material_type=key).exists():
+            raise serializers.ValidationError({'name': 'A client-supplied product with this name already exists.'})
+        validated_data['material_type'] = key
+        return super().create(validated_data)
 
     class Meta:
         model = ClientMaterial
         fields = ['id', 'material_type', 'name', 'quantity', 'unit', 'unit_price']
-        read_only_fields = fields
+        read_only_fields = ['id', 'material_type', 'quantity']
+        extra_kwargs = {
+            'unit': {'required': True},
+            'unit_price': {'required': True},
+        }
 
 
 class ClientMaterialReceiptSerializer(serializers.ModelSerializer):
@@ -357,7 +382,7 @@ class ClientMaterialPOSerializer(serializers.ModelSerializer):
     quantity = serializers.DecimalField(max_digits=14, decimal_places=2, min_value=Decimal('0.01'))
     unit_price = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal('0'))
     customer_name = serializers.CharField(source='customer.name', read_only=True)
-    material_name = serializers.CharField(source='material.get_material_type_display', read_only=True)
+    material_name = serializers.CharField(source='material.name', read_only=True)
     material_unit = serializers.CharField(source='material.unit', read_only=True)
     receipts = ClientMaterialReceiptSerializer(many=True, read_only=True)
     received_quantity = serializers.SerializerMethodField()

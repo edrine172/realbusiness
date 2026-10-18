@@ -357,7 +357,8 @@ export interface BottleProduct {
   id: number;
   sku: string;
   name: string;
-  category: 'UGANDA WARAGI' | 'GUARANTEE';
+  category: string;
+  unit: string;
   quantity: number;
   unit_price: string;
   is_active: boolean;
@@ -369,7 +370,8 @@ export interface BottleCustomerPOLine {
   product: number;
   product_name: string;
   product_sku: string;
-  category: BottleProduct['category'];
+  category: string;
+  unit: string;
   quantity: number;
   unit_price: string;
   line_total: string;
@@ -396,12 +398,12 @@ export interface BottleCustomerDelivery {
   reference: string;
   notes: string;
   delivered_at: string;
-  items: Array<{ id: number; purchase_order_line: number; product_name: string; product_sku: string; quantity: number }>;
+  items: Array<{ id: number; purchase_order_line: number; product_name: string; product_sku: string; unit: string; quantity: number }>;
 }
 
 export interface ClientMaterial {
   id: number;
-  material_type: 'spent_yeast' | 'ash';
+  material_type: string;
   name: string;
   quantity: string;
   unit: string;
@@ -814,7 +816,7 @@ export const api = {
   receivePurchase: (id: number) =>
     request<Purchase>(`/purchases/${id}/receive/`, { method: 'POST', body: JSON.stringify({}) }),
   bottleProducts: () => request<BottleProduct[]>('/po-client/bottle-products/'),
-  createBottleProduct: (product: Pick<BottleProduct, 'sku' | 'name' | 'category' | 'quantity' | 'unit_price'>) =>
+  createBottleProduct: (product: Pick<BottleProduct, 'sku' | 'name' | 'category' | 'unit' | 'quantity' | 'unit_price'>) =>
     request<BottleProduct>('/po-client/bottle-products/', { method: 'POST', body: JSON.stringify(product) }),
   bottleOrders: () => request<BottleCustomerPO[]>('/po-client/bottle-orders/'),
   createBottleOrder: (order: { reference: string; customer: number; expected_delivery?: string | null; notes?: string; items: Array<{ product: number; quantity: number; unit_price: string }> }) =>
@@ -822,6 +824,8 @@ export const api = {
   deliverBottleOrder: (id: number, delivery: { items: Array<{ purchase_order_line: number; quantity: number }>; notes?: string }) =>
     request<BottleCustomerPO>(`/po-client/bottle-orders/${id}/deliver/`, { method: 'POST', body: JSON.stringify(delivery) }),
   clientMaterials: () => request<ClientMaterial[]>('/po-client/materials/'),
+  createClientMaterial: (material: Pick<ClientMaterial, 'name' | 'unit' | 'unit_price'>) =>
+    request<ClientMaterial>('/po-client/materials/', { method: 'POST', body: JSON.stringify(material) }),
   clientMaterialOrders: () => request<ClientMaterialPO[]>('/po-client/material-orders/'),
   createClientMaterialOrder: (order: { reference: string; customer: number; material: number; quantity: string; unit_price: string; expected_delivery?: string | null; notes?: string }) =>
     request<ClientMaterialPO>('/po-client/material-orders/', { method: 'POST', body: JSON.stringify(order) }),

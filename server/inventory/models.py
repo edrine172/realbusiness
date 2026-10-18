@@ -162,7 +162,8 @@ class BottleProduct(models.Model):
 
     sku = models.CharField(max_length=64, unique=True)
     name = models.CharField(max_length=180)
-    category = models.CharField(max_length=24, choices=Category.choices)
+    category = models.CharField(max_length=80, default=Category.UGANDA_WARAGI)
+    unit = models.CharField(max_length=24, default='bottles')
     quantity = models.PositiveIntegerField(default=0)
     unit_price = models.DecimalField(max_digits=12, decimal_places=2)
     is_active = models.BooleanField(default=True)
@@ -234,7 +235,8 @@ class ClientMaterial(models.Model):
         SPENT_YEAST = 'spent_yeast', 'Spent Yeast'
         ASH = 'ash', 'Ash'
 
-    material_type = models.CharField(max_length=20, choices=MaterialType.choices, unique=True)
+    material_type = models.CharField(max_length=64, unique=True)
+    name = models.CharField(max_length=120, blank=True)
     quantity = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     unit = models.CharField(max_length=16, default='kg')
     unit_price = models.DecimalField(max_digits=12, decimal_places=2, default=0)
@@ -243,7 +245,7 @@ class ClientMaterial(models.Model):
         ordering = ['material_type']
 
     def __str__(self):
-        return self.get_material_type_display()
+        return self.name or self.get_material_type_display()
 
 
 class ClientMaterialPO(models.Model):

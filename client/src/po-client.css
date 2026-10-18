@@ -69,7 +69,7 @@
 .po-register-controls input{width:100%;height:29px;border:0;outline:0;background:transparent;color:#26364d;font-size:9px}
 .po-register-controls select{height:31px;padding:0 24px 0 8px;border:1px solid #e7ebf3;border-radius:5px;background:#fff;color:#536078;font-size:8px}
 .po-register-scroll{width:100%;overflow:auto}
-.po-register table{width:100%;min-width:790px;border-collapse:collapse;text-align:left}
+.po-register table{width:100%;min-width:870px;border-collapse:collapse;text-align:left}
 .po-register th{padding:9px 10px;background:#f3f6fc;color:#7c879a;font-size:7px;font-weight:800;letter-spacing:.035em}
 .po-register td{padding:9px 10px;border-top:1px solid #edf0f6;color:#536078;font-size:8px}
 .po-register td:first-child{max-width:175px}
@@ -109,6 +109,19 @@
 .po-receipt-history>div>span:first-child{display:grid;gap:3px}
 .po-receipt-history b{color:#26364d}
 .po-receipt-history small{color:#8791a2;font-size:7px}
+.po-order-history{display:grid;gap:9px;margin:0 14px 14px;padding:11px;border:1px solid #e5eaf2;border-radius:6px;background:#fafbfe}
+.po-order-history>header{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.po-order-history>header>div{display:grid;gap:4px}
+.po-order-history>header strong{color:#26364d;font-size:9px}
+.po-order-history>header small,.po-order-history article small{color:#8791a2;font-size:8px}
+.po-order-history>header button{width:22px;height:22px;border:0;border-radius:4px;background:#edf0f6;color:#647188;font-size:15px}
+.po-order-history>p{margin:0;color:#77849a;font-size:8px}
+.po-order-history-list{display:grid;gap:7px}
+.po-order-history article{display:grid;gap:6px;padding:8px;border:1px solid #edf0f6;border-radius:5px;background:#fff}
+.po-order-history article>div{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.po-order-history article>div b{color:#26364d;font-size:8px}
+.po-order-history ul{display:grid;gap:3px;margin:0;padding-left:16px;color:#5e6b80;font-size:8px}
+.po-order-history article>small{color:#77849a;font-size:8px}
 @media(max-width:1000px){.po-client-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.po-client-workbench{grid-template-columns:minmax(0,1fr) minmax(280px,.85fr)}}
 @media(max-width:720px){.po-client-workbench{grid-template-columns:1fr}.po-dock{order:-1}}
 @media(max-width:720px){.po-catalog-layout{grid-template-columns:1fr}}

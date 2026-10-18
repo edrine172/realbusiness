@@ -592,6 +592,17 @@ class CustomerPOClientWorkflowTests(AdminAPITestCase):
         )
         self.assertEqual(final_delivery.status_code, 200)
         self.assertEqual(final_delivery.data['status'], BottleCustomerPO.Status.COMPLETED)
+        self.assertEqual(
+            sorted(delivery['items'][0]['quantity'] for delivery in final_delivery.data['deliveries']),
+            [5, 7],
+        )
+        order_history = self.client.get('/api/po-client/bottle-orders/')
+        self.assertEqual(order_history.status_code, 200)
+        self.assertEqual(order_history.data[0]['status'], BottleCustomerPO.Status.COMPLETED)
+        self.assertEqual(
+            sorted(delivery['items'][0]['quantity'] for delivery in order_history.data[0]['deliveries']),
+            [5, 7],
+        )
         self.bottle.refresh_from_db()
         self.assertEqual(self.bottle.quantity, 8)
 
@@ -667,6 +678,64 @@ class CustomerPOClientWorkflowTests(AdminAPITestCase):
         self.assertEqual(final_receipt.data['status'], ClientMaterialPO.Status.COMPLETED)
         self.material.refresh_from_db()
         self.assertEqual(self.material.quantity, Decimal('100.00'))
+
+    def test_custom_client_supplied_product_can_be_received_on_its_own_po(self):
+        created_product = self.client.post('/api/po-client/materials/', {
+            'name': 'Cooking Oil',
+            'unit': 'litres',
+            'unit_price': '5000.00',
+        }, format='json')
+        self.assertEqual(created_product.status_code, 201)
+        self.assertEqual(created_product.data['name'], 'Cooking Oil')
+        self.assertEqual(created_product.data['quantity'], '0.00')
+
+        created_order = self.client.post('/api/po-client/material-orders/', {
+            'reference': 'CLIENT-OIL-001',
+            'customer': self.customer.id,
+            'material': created_product.data['id'],
+            'quantity': '20.00',
+            'unit_price': '5000.00',
+        }, format='json')
+        self.assertEqual(created_order.status_code, 201)
+        receipt = self.client.post(
+            f"/api/po-client/material-orders/{created_order.data['id']}/receive/",
+            {'quantity': '8.00'},
+            format='json',
+        )
+        self.assertEqual(receipt.status_code, 200)
+        self.assertEqual(receipt.data['material_name'], 'Cooking Oil')
+        self.assertEqual(receipt.data['material_unit'], 'litres')
+        created_product = self.client.get('/api/po-client/materials/').data
+        oil = next(item for item in created_product if item['name'] == 'Cooking Oil')
+        self.assertEqual(Decimal(oil['quantity']), Decimal('8.00'))
+
+    def test_custom_delivery_product_tracks_its_stock_unit_and_partial_delivery(self):
+        created_product = self.client.post('/api/po-client/bottle-products/', {
+            'sku': 'BOX-001',
+            'name': 'Shipping Boxes',
+            'category': 'Packaging',
+            'unit': 'boxes',
+            'quantity': 10,
+            'unit_price': '2000.00',
+        }, format='json')
+        self.assertEqual(created_product.status_code, 201)
+
+        created_order = self.client.post('/api/po-client/bottle-orders/', {
+            'reference': 'CLIENT-BOX-001',
+            'customer': self.customer.id,
+            'items': [{'product': created_product.data['id'], 'quantity': 6, 'unit_price': '2000.00'}],
+        }, format='json')
+        self.assertEqual(created_order.status_code, 201)
+        line_id = created_order.data['items'][0]['id']
+        delivery = self.client.post(
+            f"/api/po-client/bottle-orders/{created_order.data['id']}/deliver/",
+            {'items': [{'purchase_order_line': line_id, 'quantity': 2}]},
+            format='json',
+        )
+        self.assertEqual(delivery.status_code, 200)
+        self.assertEqual(delivery.data['items'][0]['unit'], 'boxes')
+        self.assertEqual(delivery.data['deliveries'][0]['items'][0]['unit'], 'boxes')
+        self.assertEqual(delivery.data['items'][0]['remaining_quantity'], 4)
 
 
 class PurchaseWorkflowTests(AdminAPITestCase):
@@ -1404,7 +1473,7 @@ class DashboardAccountTests(APITestCase):
         user = get_user_model().objects.get(username='gmail-member')
         self.assertEqual(user.email, 'gmail.member@gmail.com')
 
-    def test_registration_creates_standard_user_without_dashboard_access(self):
+    def test_registration_creates_full_access_workspace_user_and_starts_session(self):
         registered = self.client.post('/api/account/register/', {
             'username': 'warehouse-member',
             'email': 'member@example.test',
@@ -1414,11 +1483,14 @@ class DashboardAccountTests(APITestCase):
         self.assertEqual(registered.status_code, 201)
         user = get_user_model().objects.get(username='warehouse-member')
         self.assertTrue(user.check_password('safe-password-123'))
-        self.assertFalse(user.is_staff)
+        self.assertTrue(user.is_staff)
         self.assertFalse(user.is_superuser)
-        self.assertEqual(self.client.get('/api/account/session/').status_code, 401)
-        self.assertEqual(self.client.get('/api/access/dashboard/').status_code, 403)
-        self.assertEqual(self.client.get('/api/dashboard/summary/').status_code, 403)
+        self.assertEqual(list(user.groups.values_list('name', flat=True)), ['Registered workspace users'])
+        self.assertEqual(self.client.get('/api/account/session/').status_code, 200)
+        self.assertEqual(self.client.get('/api/access/session/').status_code, 200)
+        self.assertEqual(self.client.get('/api/access/dashboard/').status_code, 200)
+        self.assertEqual(self.client.get('/api/dashboard/summary/').status_code, 200)
+        self.assertEqual(self.client.get('/api/products/').status_code, 200)
 
     def test_login_logout_and_registration_validation(self):
         duplicate = self.client.post('/api/account/register/', {
@@ -1438,15 +1510,18 @@ class DashboardAccountTests(APITestCase):
             'username': 'dashboard-user',
             'password': 'safe-password-123',
         }, format='json')
-        self.assertEqual(logged_in.status_code, 400)
-        self.assertEqual(self.client.get('/api/account/session/').status_code, 401)
+        self.assertEqual(logged_in.status_code, 200)
+        self.assertEqual(self.client.get('/api/account/session/').status_code, 200)
 
-    def test_staff_admin_can_sign_in_and_access_business_dashboards(self):
+    def test_staff_user_with_full_role_can_sign_in_and_access_business_dashboards(self):
         staff_admin = get_user_model().objects.create_user(
             username='staff-admin',
             password='safe-password-123',
             is_staff=True,
         )
+        workspace_role = Group.objects.create(name='Authorized workspace users')
+        workspace_role.permissions.add(*Permission.objects.filter(content_type__app_label='inventory'))
+        staff_admin.groups.add(workspace_role)
 
         logged_in = self.client.post('/api/account/login/', {
             'username': staff_admin.username,
@@ -1528,7 +1603,6 @@ class DashboardSummaryPerformanceTests(AdminAPITestCase):
         self.assertAlmostEqual(sum(day['purchases'] for day in response.data['series']), 12.0)
 
 
-
 class AccessControlDashboardTests(APITestCase):
     def setUp(self):
         self.admin = get_user_model().objects.create_superuser(
@@ -1541,6 +1615,77 @@ class AccessControlDashboardTests(APITestCase):
         response = self.client.get('/api/access/dashboard/')
 
         self.assertIn(response.status_code, [401, 403])
+
+    def test_superuser_can_create_superuser_and_status_cannot_be_changed_later(self):
+        self.client.force_authenticate(user=self.admin)
+        response = self.client.post('/api/access/users/', {
+            'username': 'new-system-admin',
+            'email': 'new-admin@example.test',
+            'password': 'temporary-password-123',
+            'is_active': True,
+            'is_staff': False,
+            'is_superuser': True,
+        }, format='json')
+
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(response.data['is_superuser'])
+        self.assertTrue(response.data['is_staff'])
+        user = get_user_model().objects.get(username='new-system-admin')
+        self.assertTrue(user.is_superuser)
+        self.assertTrue(user.is_staff)
+        self.assertTrue(user.check_password('temporary-password-123'))
+        self.assertTrue(SecurityAuditEvent.objects.filter(
+            action='user.created',
+            target_id=str(user.pk),
+            details__is_superuser=True,
+        ).exists())
+
+        demotion = self.client.patch(
+            f'/api/access/users/{user.pk}/',
+            {'is_superuser': False},
+            format='json',
+        )
+
+        self.assertEqual(demotion.status_code, 400)
+        user.refresh_from_db()
+        self.assertTrue(user.is_superuser)
+
+    def test_user_with_manage_access_cannot_create_superusers(self):
+        permission = Permission.objects.get(
+            codename='manage_access',
+            content_type__app_label='inventory',
+        )
+        role = Group.objects.create(name='Access managers')
+        role.permissions.add(permission)
+        manager = get_user_model().objects.create_user(
+            username='access-manager',
+            password='secure-test-password',
+            is_staff=True,
+        )
+        manager.groups.add(role)
+        self.client.force_authenticate(user=manager)
+
+        regular_user_response = self.client.post('/api/access/users/', {
+            'username': 'managed-workspace-user',
+            'password': 'temporary-password-123',
+            'is_active': True,
+            'is_staff': True,
+            'is_superuser': False,
+        }, format='json')
+        self.assertEqual(regular_user_response.status_code, 201)
+        self.assertFalse(regular_user_response.data['is_superuser'])
+
+        response = self.client.post('/api/access/users/', {
+            'username': 'unauthorized-system-admin',
+            'password': 'temporary-password-123',
+            'is_active': True,
+            'is_staff': True,
+            'is_superuser': True,
+        }, format='json')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('Only a superuser can create another superuser.', response.data['is_superuser'])
+        self.assertFalse(get_user_model().objects.filter(username='unauthorized-system-admin').exists())
 
     def test_superuser_can_manage_roles_permissions_users_and_audit(self):
         self.client.force_authenticate(user=self.admin)

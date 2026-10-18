@@ -999,6 +999,7 @@ class BottleProductViewSet(viewsets.ModelViewSet):
 class BottleCustomerPOViewSet(viewsets.ModelViewSet):
     queryset = BottleCustomerPO.objects.select_related('customer').prefetch_related(
         'items__product', 'items__delivery_lines',
+        'deliveries__items__purchase_order_line__product',
     ).all()
     serializer_class = BottleCustomerPOSerializer
     http_method_names = ['get', 'post', 'head', 'options']
@@ -1062,9 +1063,10 @@ class BottleCustomerPOViewSet(viewsets.ModelViewSet):
         return Response(self.get_serializer(purchase_order).data)
 
 
-class ClientMaterialViewSet(viewsets.ReadOnlyModelViewSet):
+class ClientMaterialViewSet(viewsets.ModelViewSet):
     queryset = ClientMaterial.objects.all()
     serializer_class = ClientMaterialSerializer
+    http_method_names = ['get', 'post', 'head', 'options']
 
 
 class ClientMaterialPOViewSet(viewsets.ModelViewSet):
