@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { AlertCircle, Check, ClipboardList, Package, Plus, RefreshCw, Search, Truck } from 'lucide-react';
 import {
   api,
@@ -97,9 +97,7 @@ export default function PurchaseOrderClient() {
   const openBottleOrders = bottleOrders.filter((order) => order.status !== 'completed');
   const openMaterialOrders = materialOrders.filter((order) => order.status !== 'completed');
   const selectedBottleOrder = openBottleOrders.find((order) => order.id === selectedBottleOrderId) ?? openBottleOrders[0] ?? null;
-  const historyBottleOrder = bottleOrders.find((order) => order.id === historyBottleOrderId) ?? null;
   const selectedMaterialOrder = openMaterialOrders.find((order) => order.id === selectedMaterialOrderId) ?? openMaterialOrders[0] ?? null;
-  const historyMaterialOrder = materialOrders.find((order) => order.id === historyMaterialOrderId) ?? null;
   const filteredBottleOrders = useMemo(() => {
     const term = query.trim().toLowerCase();
     return bottleOrders.filter((order) => {
@@ -405,27 +403,31 @@ export default function PurchaseOrderClient() {
         <header><div><span className="po-eyebrow">LIVE PROCUREMENT REGISTER</span><h2>{tab === 'bottle-orders' ? 'Client Delivery POs' : 'Client-Supplied Product POs'}</h2><p>{tab === 'bottle-orders' ? 'Track quantities delivered against each client PO.' : 'Each product PO has independent quantity, rate, and receipts.'}</p></div><span className="po-order-count">{tab === 'bottle-orders' ? bottleOrders.length : materialOrders.length} POs</span></header>
         <div className="po-register-controls"><label><Search size={14}/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search PO, customer, product"/></label><select aria-label="Filter PO status" value={filter} onChange={(event) => setFilter(event.target.value as OrderFilter)}><option value="all">All statuses</option><option value="open">Open</option><option value="partial">Partially fulfilled</option><option value="completed">Completed</option></select></div>
         <div className="po-register-scroll"><table><thead>{tab === 'bottle-orders' ? <tr><th>CLIENT PO</th><th>CUSTOMER</th><th>PRODUCT CATEGORIES</th><th>ORDERED / DELIVERED</th><th>PO AMOUNT</th><th>EXPECTED</th><th>STATUS</th><th>DELIVERIES</th></tr> : <tr><th>CLIENT PO</th><th>CUSTOMER</th><th>SUPPLIED PRODUCT</th><th>ORDERED / RECEIVED</th><th>UNIT RATE</th><th>PO AMOUNT</th><th>STATUS</th><th>RECEIPTS</th></tr>}</thead><tbody>
-          {tab === 'bottle-orders' ? filteredBottleOrders.map((order) => <tr key={order.id}><td><b>{order.reference}</b><small>Created {dateLabel(order.ordered_at)}</small></td><td>{order.customer_name}</td><td>{[...new Set(order.items.map((item) => item.category))].join(', ')}</td><td>{order.items.map((item) => <small key={item.id}>{item.category}: {item.delivered_quantity} / {item.quantity} {item.unit}</small>)}</td><td><b>{formatCurrency(order.total)}</b></td><td>{dateLabel(order.expected_delivery)}</td><td><span className={`po-status ${order.status}`}>{order.status}</span></td><td><button className="po-row-action" type="button" aria-expanded={historyBottleOrderId === order.id} onClick={() => setHistoryBottleOrderId((current) => current === order.id ? null : order.id)}>{historyBottleOrderId === order.id ? 'Hide history' : `View history (${order.deliveries.length})`}</button></td></tr>)
-            : filteredMaterialOrders.map((order) => <tr key={order.id}><td><b>{order.reference}</b><small>Created {dateLabel(order.ordered_at)}</small></td><td>{order.customer_name}</td><td>{order.material_name}</td><td>{order.received_quantity} / {order.quantity} {order.material_unit}</td><td>{formatCurrency(order.unit_price)} / {order.material_unit}</td><td><b>{formatCurrency(order.total)}</b></td><td><span className={`po-status ${order.status}`}>{order.status}</span></td><td><button className="po-row-action" type="button" aria-expanded={historyMaterialOrderId === order.id} onClick={() => setHistoryMaterialOrderId((current) => current === order.id ? null : order.id)}>{historyMaterialOrderId === order.id ? 'Hide history' : `View history (${order.receipts.length})`}</button></td></tr>)}
+          {tab === 'bottle-orders' ? filteredBottleOrders.map((order) => <Fragment key={order.id}>
+            <tr><td><b>{order.reference}</b><small>Created {dateLabel(order.ordered_at)}</small></td><td>{order.customer_name}</td><td>{[...new Set(order.items.map((item) => item.category))].join(', ')}</td><td>{order.items.map((item) => <small key={item.id}>{item.category}: {item.delivered_quantity} / {item.quantity} {item.unit}</small>)}</td><td><b>{formatCurrency(order.total)}</b></td><td>{dateLabel(order.expected_delivery)}</td><td><span className={`po-status ${order.status}`}>{order.status}</span></td><td><button className="po-row-action" type="button" aria-expanded={historyBottleOrderId === order.id} onClick={() => setHistoryBottleOrderId((current) => current === order.id ? null : order.id)}>{historyBottleOrderId === order.id ? 'Hide history' : `View history (${order.deliveries.length})`}</button></td></tr>
+            {historyBottleOrderId === order.id && <tr className="po-order-history-row"><td colSpan={8}><div className="po-order-history">
+              <header><div><strong>Delivery history · {order.reference}</strong><small>{order.customer_name} · {order.status} · {order.deliveries.length} deliveries</small></div></header>
+              {order.deliveries.length ? <div className="po-order-history-list">{order.deliveries.map((delivery) => <article key={delivery.id}>
+                <div><b>{delivery.reference}</b><small>{dateLabel(delivery.delivered_at)}</small></div>
+                <ul>{delivery.items.map((item) => <li key={item.id}>{item.quantity.toLocaleString()} × {item.product_name} ({item.product_sku})</li>)}</ul>
+                {delivery.notes && <small>{delivery.notes}</small>}
+              </article>)}</div> : <p>No deliveries have been recorded for this PO.</p>}
+            </div></td></tr>}
+          </Fragment>)
+            : filteredMaterialOrders.map((order) => <Fragment key={order.id}>
+              <tr><td><b>{order.reference}</b><small>Created {dateLabel(order.ordered_at)}</small></td><td>{order.customer_name}</td><td>{order.material_name}</td><td>{order.received_quantity} / {order.quantity} {order.material_unit}</td><td>{formatCurrency(order.unit_price)} / {order.material_unit}</td><td><b>{formatCurrency(order.total)}</b></td><td><span className={`po-status ${order.status}`}>{order.status}</span></td><td><button className="po-row-action" type="button" aria-expanded={historyMaterialOrderId === order.id} onClick={() => setHistoryMaterialOrderId((current) => current === order.id ? null : order.id)}>{historyMaterialOrderId === order.id ? 'Hide history' : `View history (${order.receipts.length})`}</button></td></tr>
+              {historyMaterialOrderId === order.id && <tr className="po-order-history-row"><td colSpan={8}><div className="po-order-history">
+                <header><div><strong>Receipt history · {order.reference}</strong><small>{order.customer_name} · {order.material_name} · {order.status} · {order.receipts.length} receipts</small></div></header>
+                {order.receipts.length ? <div className="po-order-history-list">{order.receipts.map((receipt) => <article key={receipt.id}>
+                  <div><b>{receipt.reference}</b><small>{dateLabel(receipt.received_at)}</small></div>
+                  <ul><li>{formatQuantity(Number(receipt.quantity))} {order.material_unit} received</li></ul>
+                  {receipt.notes && <small>{receipt.notes}</small>}
+                </article>)}</div> : <p>No receipts have been recorded for this PO.</p>}
+              </div></td></tr>}
+            </Fragment>)}
           {tab === 'bottle-orders' && !filteredBottleOrders.length && <tr><td className="po-table-empty" colSpan={8}>No bottle client POs match your filters.</td></tr>}
           {tab === 'material-orders' && !filteredMaterialOrders.length && <tr><td className="po-table-empty" colSpan={8}>No material POs match your filters.</td></tr>}
         </tbody></table></div>
-        {tab === 'bottle-orders' && historyBottleOrder && <div className="po-order-history">
-          <header><div><strong>Delivery history · {historyBottleOrder.reference}</strong><small>{historyBottleOrder.customer_name} · {historyBottleOrder.status} · {historyBottleOrder.deliveries.length} deliveries</small></div><button type="button" onClick={() => setHistoryBottleOrderId(null)} aria-label="Close delivery history">×</button></header>
-          {historyBottleOrder.deliveries.length ? <div className="po-order-history-list">{historyBottleOrder.deliveries.map((delivery) => <article key={delivery.id}>
-            <div><b>{delivery.reference}</b><small>{dateLabel(delivery.delivered_at)}</small></div>
-            <ul>{delivery.items.map((item) => <li key={item.id}>{item.quantity.toLocaleString()} × {item.product_name} ({item.product_sku})</li>)}</ul>
-            {delivery.notes && <small>{delivery.notes}</small>}
-          </article>)}</div> : <p>No deliveries have been recorded for this PO.</p>}
-        </div>}
-        {tab === 'material-orders' && historyMaterialOrder && <div className="po-order-history">
-          <header><div><strong>Receipt history · {historyMaterialOrder.reference}</strong><small>{historyMaterialOrder.customer_name} · {historyMaterialOrder.material_name} · {historyMaterialOrder.status} · {historyMaterialOrder.receipts.length} receipts</small></div><button type="button" onClick={() => setHistoryMaterialOrderId(null)} aria-label="Close receipt history">×</button></header>
-          {historyMaterialOrder.receipts.length ? <div className="po-order-history-list">{historyMaterialOrder.receipts.map((receipt) => <article key={receipt.id}>
-            <div><b>{receipt.reference}</b><small>{dateLabel(receipt.received_at)}</small></div>
-            <ul><li>{formatQuantity(Number(receipt.quantity))} {historyMaterialOrder.material_unit} received</li></ul>
-            {receipt.notes && <small>{receipt.notes}</small>}
-          </article>)}</div> : <p>No receipts have been recorded for this PO.</p>}
-        </div>}
       </section>}
     </>}
   </div>;
