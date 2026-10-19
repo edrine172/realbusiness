@@ -816,7 +816,7 @@ export const api = {
   receivePurchase: (id: number) =>
     request<Purchase>(`/purchases/${id}/receive/`, { method: 'POST', body: JSON.stringify({}) }),
   bottleProducts: () => request<BottleProduct[]>('/po-client/bottle-products/'),
-  createBottleProduct: (product: Pick<BottleProduct, 'sku' | 'name' | 'category' | 'unit' | 'quantity' | 'unit_price'>) =>
+  createBottleProduct: (product: Pick<BottleProduct, 'category' | 'unit' | 'unit_price'> & { inventory_product: number }) =>
     request<BottleProduct>('/po-client/bottle-products/', { method: 'POST', body: JSON.stringify(product) }),
   bottleOrders: () => request<BottleCustomerPO[]>('/po-client/bottle-orders/'),
   createBottleOrder: (order: { reference: string; customer: number; expected_delivery?: string | null; notes?: string; items: Array<{ product: number; quantity: number; unit_price: string }> }) =>

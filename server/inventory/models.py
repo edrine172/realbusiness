@@ -167,6 +167,11 @@ class BottleProduct(models.Model):
     quantity = models.PositiveIntegerField(default=0)
     unit_price = models.DecimalField(max_digits=12, decimal_places=2)
     is_active = models.BooleanField(default=True)
+    inventory_product = models.OneToOneField(
+        Product,
+        on_delete=models.PROTECT,
+        related_name='bottle_catalog_entry',
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

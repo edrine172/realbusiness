@@ -218,21 +218,106 @@ class PurchaseSerializer(serializers.ModelSerializer):
 
 
 class BottleProductSerializer(serializers.ModelSerializer):
+    id = serializers.IntegerField(source='inventory_product_id', read_only=True)
+    inventory_product = serializers.PrimaryKeyRelatedField(
+        queryset=Product.objects.filter(is_active=True),
+        required=False,
+        write_only=True,
+    )
+    sku = serializers.CharField(required=False)
+    name = serializers.CharField(required=False)
+    quantity = serializers.IntegerField(required=False, min_value=0)
+
     def validate_unit_price(self, value):
         if value < 0:
             raise serializers.ValidationError('Bottle price cannot be negative.')
         return value
 
+    def validate(self, attrs):
+        inventory_product = attrs.get('inventory_product')
+        if inventory_product and BottleProduct.objects.filter(inventory_product=inventory_product).exists():
+            raise serializers.ValidationError({
+                'inventory_product': 'This product is already linked to the delivery catalog.',
+            })
+        if inventory_product is None:
+            sku = attrs.get('sku')
+            if not sku or not attrs.get('name'):
+                raise serializers.ValidationError('Choose a product or provide its SKU and name.')
+            existing_product = Product.objects.filter(sku=sku).first()
+            if existing_product and not existing_product.is_active:
+                raise serializers.ValidationError({'sku': 'This product is inactive in the product dashboard.'})
+            if existing_product and BottleProduct.objects.filter(inventory_product=existing_product).exists():
+                raise serializers.ValidationError({'sku': 'This product is already linked to the delivery catalog.'})
+        return attrs
+
+    def create(self, validated_data):
+        inventory_product = validated_data.pop('inventory_product', None)
+        if inventory_product is None:
+            sku = validated_data.pop('sku')
+            name = validated_data.pop('name')
+            quantity = validated_data.pop('quantity')
+            category_name = validated_data['category'][:100] or 'Uncategorized'
+            category, _ = Category.objects.get_or_create(name=category_name)
+            inventory_product = Product.objects.filter(sku=sku).first()
+            if inventory_product is None:
+                inventory_product = Product.objects.create(
+                    sku=sku,
+                    name=name,
+                    category=category,
+                    quantity=quantity,
+                    unit_price=validated_data['unit_price'],
+                    cost_price=0,
+                )
+            validated_data['sku'] = inventory_product.sku
+            validated_data['name'] = inventory_product.name
+            validated_data['quantity'] = inventory_product.quantity
+            validated_data['inventory_product'] = inventory_product
+        else:
+            validated_data['sku'] = inventory_product.sku
+            validated_data['name'] = inventory_product.name
+            validated_data['quantity'] = inventory_product.quantity
+            validated_data['inventory_product'] = inventory_product
+        bottle_product = super().create(validated_data)
+        if inventory_product is not None:
+            bottle_product.quantity = inventory_product.quantity
+            bottle_product.save(update_fields=['quantity'])
+        return bottle_product
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data.update({
+            'id': instance.inventory_product_id,
+            'sku': instance.inventory_product.sku,
+            'name': instance.inventory_product.name,
+            'quantity': instance.inventory_product.quantity,
+        })
+        return data
+
     class Meta:
         model = BottleProduct
-        fields = ['id', 'sku', 'name', 'category', 'unit', 'quantity', 'unit_price', 'is_active', 'created_at']
+        fields = ['id', 'inventory_product', 'sku', 'name', 'category', 'unit', 'quantity', 'unit_price', 'is_active', 'created_at']
         read_only_fields = ['id', 'created_at']
 
 
+class BottleInventoryProductField(serializers.RelatedField):
+    def to_internal_value(self, data):
+        try:
+            inventory_product = Product.objects.get(pk=data, is_active=True)
+        except (Product.DoesNotExist, TypeError, ValueError):
+            raise serializers.ValidationError('Select an active product from the product dashboard.')
+        try:
+            return BottleProduct.objects.get(inventory_product=inventory_product, is_active=True)
+        except BottleProduct.DoesNotExist:
+            raise serializers.ValidationError('This product is not available in the delivery catalog.')
+
+    def to_representation(self, value):
+        return value.inventory_product_id
+
+
 class BottleCustomerPOLineSerializer(serializers.ModelSerializer):
-    product = serializers.PrimaryKeyRelatedField(queryset=BottleProduct.objects.all())
-    product_name = serializers.CharField(source='product.name', read_only=True)
-    product_sku = serializers.CharField(source='product.sku', read_only=True)
+    product = BottleInventoryProductField(queryset=Product.objects.filter(is_active=True))
+    product_name = serializers.CharField(source='product.inventory_product.name', read_only=True)
+    product_sku = serializers.CharField(source='product.inventory_product.sku', read_only=True)
     category = serializers.CharField(source='product.category', read_only=True)
     unit = serializers.CharField(source='product.unit', read_only=True)
     quantity = serializers.IntegerField(min_value=1)
@@ -257,8 +342,8 @@ class BottleCustomerPOLineSerializer(serializers.ModelSerializer):
 
 
 class BottleDeliveryRecordLineSerializer(serializers.ModelSerializer):
-    product_name = serializers.CharField(source='purchase_order_line.product.name', read_only=True)
-    product_sku = serializers.CharField(source='purchase_order_line.product.sku', read_only=True)
+    product_name = serializers.CharField(source='purchase_order_line.product.inventory_product.name', read_only=True)
+    product_sku = serializers.CharField(source='purchase_order_line.product.inventory_product.sku', read_only=True)
     unit = serializers.CharField(source='purchase_order_line.product.unit', read_only=True)
 
     class Meta:

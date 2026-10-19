@@ -991,15 +991,15 @@ class PurchaseViewSet(viewsets.ModelViewSet):
 
 
 class BottleProductViewSet(viewsets.ModelViewSet):
-    queryset = BottleProduct.objects.all()
+    queryset = BottleProduct.objects.select_related('inventory_product').all()
     serializer_class = BottleProductSerializer
     http_method_names = ['get', 'post', 'patch', 'head', 'options']
 
 
 class BottleCustomerPOViewSet(viewsets.ModelViewSet):
     queryset = BottleCustomerPO.objects.select_related('customer').prefetch_related(
-        'items__product', 'items__delivery_lines',
-        'deliveries__items__purchase_order_line__product',
+        'items__product__inventory_product', 'items__delivery_lines',
+        'deliveries__items__purchase_order_line__product__inventory_product',
     ).all()
     serializer_class = BottleCustomerPOSerializer
     http_method_names = ['get', 'post', 'head', 'options']
@@ -1015,6 +1015,7 @@ class BottleCustomerPOViewSet(viewsets.ModelViewSet):
         lines_by_id = {
             line.id: line for line in BottleCustomerPOLine.objects.select_for_update()
             .filter(purchase_order=purchase_order)
+            .select_related('product__inventory_product')
             .order_by('product_id')
         }
         delivery_items = serializer.validated_data['items']
@@ -1033,16 +1034,16 @@ class BottleCustomerPOViewSet(viewsets.ModelViewSet):
                 })
             prepared.append((line, delivery_item['quantity']))
 
-        product_ids = sorted({line.product_id for line, _ in prepared})
+        product_ids = sorted({line.product.inventory_product_id for line, _ in prepared})
         products = {
-            product.id: product for product in BottleProduct.objects.select_for_update()
+            product.id: product for product in Product.objects.select_for_update()
             .filter(pk__in=product_ids).order_by('id')
         }
         for line, quantity in prepared:
-            product = products[line.product_id]
+            product = products[line.product.inventory_product_id]
             if product.quantity < quantity:
                 raise ValidationError({
-                    'items': f'Only {product.quantity} units of {product.sku} are in bottle inventory.',
+                    'items': f'Only {product.quantity} units of {product.sku} are in product inventory.',
                 })
 
         delivery = BottleDelivery.objects.create(
@@ -1051,13 +1052,21 @@ class BottleCustomerPOViewSet(viewsets.ModelViewSet):
             notes=serializer.validated_data.get('notes', '').strip(),
         )
         for line, quantity in prepared:
-            product = products[line.product_id]
+            product = products[line.product.inventory_product_id]
             product.quantity -= quantity
-            product.save(update_fields=['quantity'])
+            product.save(update_fields=['quantity', 'updated_at'])
+            BottleProduct.objects.filter(inventory_product_id=product.id).update(quantity=product.quantity)
             BottleDeliveryLine.objects.create(
                 delivery=delivery,
                 purchase_order_line=line,
                 quantity=quantity,
+            )
+            StockMovement.objects.create(
+                product=product,
+                movement_type=StockMovement.MovementType.OUTBOUND,
+                quantity=quantity,
+                note=f'Delivered to {purchase_order.customer.name}',
+                reference=delivery.reference,
             )
 
         return Response(self.get_serializer(purchase_order).data)

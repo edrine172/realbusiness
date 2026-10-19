@@ -8,12 +8,13 @@ import {
   type ClientMaterial,
   type ClientMaterialPO,
   type Customer,
+  type Product,
 } from './api';
 
 type DashboardTab = 'bottle-orders' | 'material-orders' | 'bottle-catalog' | 'material-catalog';
 type OrderFilter = 'all' | 'open' | 'partial' | 'completed';
 type BottleLineDraft = { product: string; quantity: string; unit_price: string };
-type BottleProductDraft = { sku: string; name: string; category: string; unit: string; quantity: string; unit_price: string };
+type BottleProductDraft = { inventory_product: string; category: string; unit: string; unit_price: string };
 type ClientMaterialDraft = { name: string; unit: string; unit_price: string };
 type MaterialOrderDraft = { reference: string; customer: string; material: string; quantity: string; unit_price: string; expected_delivery: string; notes: string };
 
@@ -24,6 +25,7 @@ const dateLabel = (value: string | null) => value
 export default function PurchaseOrderClient() {
   const [tab, setTab] = useState<DashboardTab>('bottle-orders');
   const [customers, setCustomers] = useState<Customer[]>([]);
+  const [inventoryProducts, setInventoryProducts] = useState<Product[]>([]);
   const [bottleProducts, setBottleProducts] = useState<BottleProduct[]>([]);
   const [bottleOrders, setBottleOrders] = useState<BottleCustomerPO[]>([]);
   const [materials, setMaterials] = useState<ClientMaterial[]>([]);
@@ -33,7 +35,7 @@ export default function PurchaseOrderClient() {
   const [expectedDelivery, setExpectedDelivery] = useState('');
   const [notes, setNotes] = useState('');
   const [bottleLines, setBottleLines] = useState<BottleLineDraft[]>([{ product: '', quantity: '1', unit_price: '' }]);
-  const [bottleDraft, setBottleDraft] = useState<BottleProductDraft>({ sku: '', name: '', category: 'UGANDA WARAGI', unit: 'bottles', quantity: '0', unit_price: '0.00' });
+  const [bottleDraft, setBottleDraft] = useState<BottleProductDraft>({ inventory_product: '', category: 'UGANDA WARAGI', unit: 'bottles', unit_price: '0.00' });
   const [clientMaterialDraft, setClientMaterialDraft] = useState<ClientMaterialDraft>({ name: '', unit: 'kg', unit_price: '0.00' });
   const [materialDraft, setMaterialDraft] = useState<MaterialOrderDraft>({ reference: '', customer: '', material: '', quantity: '', unit_price: '', expected_delivery: '', notes: '' });
   const [deliveryQuantities, setDeliveryQuantities] = useState<Record<number, string>>({});
@@ -54,14 +56,16 @@ export default function PurchaseOrderClient() {
     setLoading(true);
     setError('');
     try {
-      const [customerRows, bottleProductRows, bottleOrderRows, materialRows, materialOrderRows] = await Promise.all([
+      const [customerRows, inventoryProductRows, bottleProductRows, bottleOrderRows, materialRows, materialOrderRows] = await Promise.all([
         api.customers(),
+        api.products(),
         api.bottleProducts(),
         api.bottleOrders(),
         api.clientMaterials(),
         api.clientMaterialOrders(),
       ]);
       setCustomers(customerRows.filter((customer) => customer.is_active));
+      setInventoryProducts(inventoryProductRows.filter((product) => product.is_active));
       setBottleProducts(bottleProductRows);
       setBottleOrders(bottleOrderRows);
       setMaterials(materialRows);
@@ -88,6 +92,8 @@ export default function PurchaseOrderClient() {
   useEffect(() => { void loadData(); }, []);
 
   const activeBottleProducts = bottleProducts.filter((product) => product.is_active);
+  const unlinkedInventoryProducts = inventoryProducts.filter((product) => !bottleProducts.some((bottleProduct) => bottleProduct.id === product.id));
+  const selectedInventoryProduct = inventoryProducts.find((product) => product.id === Number(bottleDraft.inventory_product));
   const openBottleOrders = bottleOrders.filter((order) => order.status !== 'completed');
   const openMaterialOrders = materialOrders.filter((order) => order.status !== 'completed');
   const selectedBottleOrder = openBottleOrders.find((order) => order.id === selectedBottleOrderId) ?? openBottleOrders[0] ?? null;
@@ -163,21 +169,23 @@ export default function PurchaseOrderClient() {
 
   async function createBottleCatalogItem(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!bottleDraft.inventory_product) {
+      setError('Select a product from the Product dashboard first.');
+      return;
+    }
     setSaving(true);
     setError('');
     setNotice('');
     try {
       const created = await api.createBottleProduct({
-        sku: bottleDraft.sku.trim(),
-        name: bottleDraft.name.trim(),
+        inventory_product: Number(bottleDraft.inventory_product),
         category: bottleDraft.category,
         unit: bottleDraft.unit.trim(),
-        quantity: Number(bottleDraft.quantity),
         unit_price: bottleDraft.unit_price,
       });
       await loadData();
-      setBottleDraft({ sku: '', name: '', category: 'UGANDA WARAGI', unit: 'bottles', quantity: '0', unit_price: '0.00' });
-      setNotice(`${created.name} added to the delivery catalog.`);
+      setBottleDraft({ inventory_product: '', category: 'UGANDA WARAGI', unit: 'bottles', unit_price: '0.00' });
+      setNotice(`${created.name} (Product ID ${created.id}) linked to the delivery catalog.`);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not add this bottle catalog item.');
     } finally {
@@ -314,7 +322,7 @@ export default function PurchaseOrderClient() {
           <label className="po-field">Expected delivery date<input type="date" value={expectedDelivery} onChange={(event) => setExpectedDelivery(event.target.value)}/></label>
           <div className="po-lines-heading"><strong>PO product lines</strong><button type="button" onClick={() => setBottleLines((current) => [...current, { product: '', quantity: '1', unit_price: '' }])}><Plus size={13}/> Add item</button></div>
           <div className="po-lines">{bottleLines.map((line, index) => <div className="po-line" key={index}>
-            <label className="po-field">Product / category<select required value={line.product} onChange={(event) => updateBottleLine(index, 'product', event.target.value)}><option value="">Select product</option>{activeBottleProducts.map((product) => <option key={product.id} value={product.id}>{product.category} · {product.name}</option>)}</select></label>
+            <label className="po-field">Product / category<select required value={line.product} onChange={(event) => updateBottleLine(index, 'product', event.target.value)}><option value="">Select product</option>{activeBottleProducts.map((product) => <option key={product.id} value={product.id}>ID {product.id} · {product.category} · {product.name}</option>)}</select></label>
             <label className="po-field">Qty<input required type="number" min="1" step="1" value={line.quantity} onChange={(event) => updateBottleLine(index, 'quantity', event.target.value)}/></label>
             <label className="po-field">Price / unit<input required type="number" min="0" step="0.01" value={line.unit_price} onChange={(event) => updateBottleLine(index, 'unit_price', event.target.value)}/></label>
             <button className="po-remove-line" type="button" disabled={bottleLines.length === 1} aria-label="Remove product line" onClick={() => setBottleLines((current) => current.filter((_, lineIndex) => lineIndex !== index))}>×</button>
@@ -333,9 +341,9 @@ export default function PurchaseOrderClient() {
             {openBottleOrders.length > 1 && <label className="po-field">Select open PO<select value={selectedBottleOrder.id} onChange={(event) => { setSelectedBottleOrderId(Number(event.target.value)); setDeliveryQuantities({}); }}>{openBottleOrders.map((order) => <option key={order.id} value={order.id}>{order.reference} · {order.customer_name}</option>)}</select></label>}
             <div className="po-dock-items">{selectedBottleOrder.items.filter((line) => line.remaining_quantity > 0).map((line) => {
               const product = bottleProducts.find((row) => row.id === line.product);
-              return <div className="po-dock-item po-delivery-line" key={line.id}><i><Package size={14}/></i><span><b>{line.category} · {line.product_name}</b><small>{line.product_sku} · {line.delivered_quantity} / {line.quantity} {line.unit} delivered · Stock {product?.quantity ?? 0} {line.unit}</small></span><label className="po-field">Deliver<input type="number" min="0" max={Math.min(line.remaining_quantity, product?.quantity ?? 0)} step="1" value={deliveryQuantities[line.id] ?? ''} onChange={(event) => setDeliveryQuantities((current) => ({ ...current, [line.id]: event.target.value }))} placeholder="0"/></label></div>;
+              return <div className="po-dock-item po-delivery-line" key={line.id}><i><Package size={14}/></i><span><b>{line.category} · {line.product_name}</b><small>ID {line.product} · {line.product_sku} · {line.delivered_quantity} / {line.quantity} {line.unit} delivered · Product stock {product?.quantity ?? 0} {line.unit}</small></span><label className="po-field">Deliver<input type="number" min="0" max={Math.min(line.remaining_quantity, product?.quantity ?? 0)} step="1" value={deliveryQuantities[line.id] ?? ''} onChange={(event) => setDeliveryQuantities((current) => ({ ...current, [line.id]: event.target.value }))} placeholder="0"/></label></div>;
             })}</div>
-            <p className="po-receive-hint">Each delivery reduces bottle stock. The PO completes when every ordered line is fully delivered.</p>
+            <p className="po-receive-hint">Each delivery reduces stock for this same product ID in the Product dashboard. The PO completes when every ordered line is fully delivered.</p>
             <button className="po-receive-button" disabled={busyId === selectedBottleOrder.id} onClick={() => void recordBottleDelivery(selectedBottleOrder)}><Truck size={15}/>{busyId === selectedBottleOrder.id ? 'Saving delivery…' : 'Record partial delivery'}</button>
             {selectedBottleOrder.deliveries.length > 0 && <div className="po-receipt-history"><strong>Delivery history</strong>{selectedBottleOrder.deliveries.map((delivery) => <div key={delivery.id}><span><b>{delivery.reference}</b><small>{dateLabel(delivery.delivered_at)}</small></span><span>{delivery.items.map((item) => `${item.quantity} ${item.unit} × ${item.product_name}`).join(', ')}</span></div>)}</div>}
           </> : <div className="po-dock-empty"><Truck size={24}/><span>Create a customer bottle PO to start delivery tracking.</span></div>}
@@ -367,15 +375,17 @@ export default function PurchaseOrderClient() {
 
       {tab === 'bottle-catalog' && <section className="po-catalog-layout">
         <form className="po-generator" onSubmit={(event) => void createBottleCatalogItem(event)}>
-          <header><div><span className="po-eyebrow">CLIENT DELIVERY PRODUCT CATALOG</span><h2>Add product we deliver</h2><p>These products have stock tracked separately from general inventory.</p></div><i><Package size={18}/></i></header>
-          <div className="po-form-row"><label className="po-field">SKU<input required maxLength={64} value={bottleDraft.sku} onChange={(event) => setBottleDraft((current) => ({ ...current, sku: event.target.value }))} placeholder="SKU-001"/></label><label className="po-field">Product name<input required maxLength={180} value={bottleDraft.name} onChange={(event) => setBottleDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Glass bottle 750ml"/></label></div>
+          <header><div><span className="po-eyebrow">CLIENT DELIVERY PRODUCT CATALOG</span><h2>Link a Product dashboard item</h2><p>Select an existing product. Client POs use that product’s ID and on-hand stock directly.</p></div><i><Package size={18}/></i></header>
+          <label className="po-field">Product from Product dashboard<select required value={bottleDraft.inventory_product} onChange={(event) => { const product = inventoryProducts.find((row) => row.id === Number(event.target.value)); setBottleDraft((current) => ({ ...current, inventory_product: event.target.value, unit_price: product?.unit_price ?? current.unit_price })); }}><option value="">Select a product</option>{unlinkedInventoryProducts.map((product) => <option key={product.id} value={product.id}>ID {product.id} · {product.name} · {product.sku} · Stock {product.quantity}</option>)}</select></label>
+          {selectedInventoryProduct && <p className="po-form-hint">Product ID {selectedInventoryProduct.id} · Current stock {selectedInventoryProduct.quantity}</p>}
           <label className="po-field">Category<input required maxLength={80} list="po-delivery-categories" value={bottleDraft.category} onChange={(event) => setBottleDraft((current) => ({ ...current, category: event.target.value }))} placeholder="Product category"/><datalist id="po-delivery-categories"><option value="UGANDA WARAGI"/><option value="GUARANTEE"/></datalist></label>
-          <div className="po-form-row"><label className="po-field">Stock unit<input required maxLength={24} value={bottleDraft.unit} onChange={(event) => setBottleDraft((current) => ({ ...current, unit: event.target.value }))} placeholder="bottles, boxes, pieces"/></label><label className="po-field">Starting stock<input required type="number" min="0" step="1" value={bottleDraft.quantity} onChange={(event) => setBottleDraft((current) => ({ ...current, quantity: event.target.value }))}/></label></div>
+          <label className="po-field">Stock unit<input required maxLength={24} value={bottleDraft.unit} onChange={(event) => setBottleDraft((current) => ({ ...current, unit: event.target.value }))} placeholder="bottles, boxes, pieces"/></label>
           <label className="po-field">Default price / unit (UGX)<input required type="number" min="0" step="0.01" value={bottleDraft.unit_price} onChange={(event) => setBottleDraft((current) => ({ ...current, unit_price: event.target.value }))}/></label>
-          <button className="po-primary-button" type="submit" disabled={saving}>{saving ? 'Adding product…' : 'Add to delivery catalog'}</button>
+          <button className="po-primary-button" type="submit" disabled={saving || !unlinkedInventoryProducts.length || !bottleDraft.inventory_product}>{saving ? 'Linking product…' : 'Link to delivery catalog'}</button>
+          {!unlinkedInventoryProducts.length && <small className="po-form-hint">{inventoryProducts.length ? 'All active products are already linked to the delivery catalog.' : 'Add an active product in the Product dashboard before linking it here.'}</small>}
         </form>
-        <section className="po-register"><header><div><span className="po-eyebrow">DELIVERY PRODUCTS</span><h2>Available delivery inventory</h2><p>Current stock available to fulfill client POs.</p></div><span className="po-order-count">{activeBottleProducts.length} products</span></header>
-          <div className="po-register-scroll"><table><thead><tr><th>CATEGORY</th><th>SKU / PRODUCT</th><th>AVAILABLE</th><th>DEFAULT PRICE</th><th>STATUS</th></tr></thead><tbody>{bottleProducts.map((product) => <tr key={product.id}><td><span className="po-status open">{product.category}</span></td><td><b>{product.sku}</b><small>{product.name}</small></td><td>{product.quantity.toLocaleString()} {product.unit}</td><td>{formatCurrency(product.unit_price)} / {product.unit}</td><td>{product.is_active ? 'Active' : 'Inactive'}</td></tr>)}{!bottleProducts.length && <tr><td className="po-table-empty" colSpan={5}>Add a product you deliver to clients to start.</td></tr>}</tbody></table></div>
+        <section className="po-register"><header><div><span className="po-eyebrow">DELIVERY PRODUCTS</span><h2>Available delivery inventory</h2><p>Product IDs and stock are shared with the Product dashboard.</p></div><span className="po-order-count">{activeBottleProducts.length} products</span></header>
+          <div className="po-register-scroll"><table><thead><tr><th>PRODUCT ID</th><th>CATEGORY</th><th>SKU / PRODUCT</th><th>AVAILABLE</th><th>DEFAULT PRICE</th><th>STATUS</th></tr></thead><tbody>{bottleProducts.map((product) => <tr key={product.id}><td>{product.id}</td><td><span className="po-status open">{product.category}</span></td><td><b>{product.sku}</b><small>{product.name}</small></td><td>{product.quantity.toLocaleString()} {product.unit}</td><td>{formatCurrency(product.unit_price)} / {product.unit}</td><td>{product.is_active ? 'Active' : 'Inactive'}</td></tr>)}{!bottleProducts.length && <tr><td className="po-table-empty" colSpan={6}>Add a product you deliver to clients to start.</td></tr>}</tbody></table></div>
         </section>
       </section>}
 

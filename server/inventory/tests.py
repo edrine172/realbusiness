@@ -547,12 +547,20 @@ class CustomerPOClientWorkflowTests(AdminAPITestCase):
     def setUp(self):
         super().setUp()
         self.customer = Customer.objects.create(customer_code='CPO-001', name='Bottle client')
+        self.product = Product.objects.create(
+            sku='BOTTLE-001',
+            name='Waragi 750ml',
+            category=Category.objects.create(name='Bottle inventory'),
+            quantity=20,
+            unit_price='150.00',
+        )
         self.bottle = BottleProduct.objects.create(
             sku='BOTTLE-001',
             name='Waragi 750ml',
             category=BottleProduct.Category.UGANDA_WARAGI,
             quantity=20,
             unit_price='150.00',
+            inventory_product=self.product,
         )
         self.material, _ = ClientMaterial.objects.get_or_create(
             material_type=ClientMaterial.MaterialType.SPENT_YEAST,
@@ -569,6 +577,7 @@ class CustomerPOClientWorkflowTests(AdminAPITestCase):
         self.assertEqual(created.status_code, 201)
         self.assertEqual(created.data['total'], '1800.00')
         self.assertEqual(created.data['status'], BottleCustomerPO.Status.OPEN)
+        self.assertEqual(created.data['items'][0]['product'], self.product.id)
         line_id = created.data['items'][0]['id']
 
         first_delivery = self.client.post(
@@ -584,6 +593,16 @@ class CustomerPOClientWorkflowTests(AdminAPITestCase):
         self.assertEqual(first_delivery.data['deliveries'][0]['items'][0]['quantity'], 5)
         self.bottle.refresh_from_db()
         self.assertEqual(self.bottle.quantity, 15)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.quantity, 15)
+        movement = StockMovement.objects.get()
+        self.assertEqual(movement.product_id, self.product.id)
+        self.assertEqual(movement.movement_type, StockMovement.MovementType.OUTBOUND)
+        self.assertEqual(movement.quantity, 5)
+        self.assertEqual(movement.reference, first_delivery.data['deliveries'][0]['reference'])
+        inventory_product = self.client.get('/api/products/').data[0]
+        self.assertEqual(inventory_product['id'], self.product.id)
+        self.assertEqual(inventory_product['quantity'], 15)
 
         final_delivery = self.client.post(
             f"/api/po-client/bottle-orders/{created.data['id']}/deliver/",
@@ -605,6 +624,9 @@ class CustomerPOClientWorkflowTests(AdminAPITestCase):
         )
         self.bottle.refresh_from_db()
         self.assertEqual(self.bottle.quantity, 8)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.quantity, 8)
+        self.assertEqual(StockMovement.objects.count(), 2)
 
     def test_bottle_delivery_rejects_overdelivery_and_insufficient_stock_atomically(self):
         created = self.client.post('/api/po-client/bottle-orders/', {
@@ -622,6 +644,9 @@ class CustomerPOClientWorkflowTests(AdminAPITestCase):
         self.assertEqual(over_stock.status_code, 400)
         self.bottle.refresh_from_db()
         self.assertEqual(self.bottle.quantity, 20)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.quantity, 20)
+        self.assertFalse(StockMovement.objects.exists())
 
         delivered = self.client.post(
             f"/api/po-client/bottle-orders/{created.data['id']}/deliver/",
@@ -637,6 +662,9 @@ class CustomerPOClientWorkflowTests(AdminAPITestCase):
         self.assertEqual(over_order.status_code, 400)
         self.bottle.refresh_from_db()
         self.assertEqual(self.bottle.quantity, 8)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.quantity, 8)
+        self.assertEqual(StockMovement.objects.count(), 1)
 
     def test_material_po_tracks_its_own_partial_receipts_and_rate(self):
         self.material.unit_price = Decimal('30.00')
@@ -710,15 +738,26 @@ class CustomerPOClientWorkflowTests(AdminAPITestCase):
         self.assertEqual(Decimal(oil['quantity']), Decimal('8.00'))
 
     def test_custom_delivery_product_tracks_its_stock_unit_and_partial_delivery(self):
+        inventory_product = Product.objects.create(
+            sku='BOX-001',
+            name='Shipping Boxes',
+            category=Category.objects.create(name='Packaging inventory'),
+            quantity=10,
+            unit_price='2000.00',
+        )
         created_product = self.client.post('/api/po-client/bottle-products/', {
-            'sku': 'BOX-001',
-            'name': 'Shipping Boxes',
+            'inventory_product': inventory_product.id,
             'category': 'Packaging',
             'unit': 'boxes',
-            'quantity': 10,
             'unit_price': '2000.00',
         }, format='json')
         self.assertEqual(created_product.status_code, 201)
+        product_id = created_product.data['id']
+        self.assertEqual(product_id, inventory_product.id)
+        listed_product = self.client.get('/api/po-client/bottle-products/').data[0]
+        self.assertEqual(listed_product['id'], inventory_product.id)
+        self.assertEqual(inventory_product.sku, 'BOX-001')
+        self.assertEqual(inventory_product.quantity, 10)
 
         created_order = self.client.post('/api/po-client/bottle-orders/', {
             'reference': 'CLIENT-BOX-001',
@@ -734,8 +773,14 @@ class CustomerPOClientWorkflowTests(AdminAPITestCase):
         )
         self.assertEqual(delivery.status_code, 200)
         self.assertEqual(delivery.data['items'][0]['unit'], 'boxes')
+        self.assertEqual(delivery.data['items'][0]['product'], product_id)
         self.assertEqual(delivery.data['deliveries'][0]['items'][0]['unit'], 'boxes')
         self.assertEqual(delivery.data['items'][0]['remaining_quantity'], 4)
+        inventory_product.refresh_from_db()
+        self.assertEqual(inventory_product.quantity, 8)
+        movement = StockMovement.objects.get(product=inventory_product)
+        self.assertEqual(movement.movement_type, StockMovement.MovementType.OUTBOUND)
+        self.assertEqual(movement.quantity, 2)
 
 
 class PurchaseWorkflowTests(AdminAPITestCase):

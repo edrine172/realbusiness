@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ArrowDownToLine, Check, ChevronDown, CircleAlert, FileText, Package, Plus, RefreshCw, Search, Truck, X } from 'lucide-react';
-import { api, formatCurrency as currency, type Product, type Purchase, type PurchaseSummary, type Supplier } from './api';
+import { api, formatCurrency as currency, type InventoryAdjustment, type Product, type Purchase, type PurchaseSummary, type Supplier } from './api';
 
 type PurchaseStatusFilter = 'All orders' | 'Ordered' | 'Received' | 'Cancelled';
 type PurchaseLineDraft = { product: string; quantity: string; unit_cost: string };
@@ -98,6 +98,61 @@ function PurchaseForm({ products, suppliers, initialSupplierId, onClose, onSaved
   </div>;
 }
 
+function PurchaseStockAdjustment({ products, onClose, onSaved }: {
+  products: Product[];
+  onClose: () => void;
+  onSaved: (product: Product, delta: number) => Promise<void>;
+}) {
+  const [productId, setProductId] = useState('');
+  const [adjustmentType, setAdjustmentType] = useState<Extract<InventoryAdjustment['adjustment_type'], 'increase' | 'decrease'>>('increase');
+  const [quantity, setQuantity] = useState('1');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const selectedProduct = products.find((product) => product.id === Number(productId));
+  const quantityValue = Number(quantity);
+  const delta = adjustmentType === 'increase' ? quantityValue : -quantityValue;
+  const isValidQuantity = Number.isInteger(quantityValue) && quantityValue > 0;
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedProduct) { setError('Select a product from the product dashboard.'); return; }
+    if (!isValidQuantity) { setError('Enter a whole number greater than zero.'); return; }
+    if (adjustmentType === 'decrease' && quantityValue > selectedProduct.quantity) {
+      setError(`Cannot remove more than the current stock of ${selectedProduct.quantity} units.`);
+      return;
+    }
+    setSaving(true);
+    setError('');
+    try {
+      await api.adjustInventory({
+        product: selectedProduct.id,
+        adjustment_type: adjustmentType,
+        quantity: quantityValue,
+        reason: 'Purchase dashboard stock adjustment',
+      });
+      await onSaved(selectedProduct, delta);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not adjust product stock.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return <div className="catalog-overlay" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+    <form className="catalog-modal purchase-payment-modal" onSubmit={submit}>
+      <div className="catalog-modal-heading"><div><span className="catalog-eyebrow">PRODUCT INVENTORY</span><h2>Adjust product stock</h2><p>Stock changes immediately and are recorded in inventory history.</p></div><button className="catalog-icon-button" type="button" onClick={onClose} aria-label="Close"><X size={18}/></button></div>
+      <label className="catalog-field">Product from product dashboard<select required value={productId} onChange={(event) => setProductId(event.target.value)}><option value="">Select a product</option>{products.map((product) => <option key={product.id} value={product.id}>{product.name} · {product.sku} · ID {product.id}</option>)}</select></label>
+      {selectedProduct && <p className="purchase-payment-confirmation">Product ID {selectedProduct.id} · Current stock: {selectedProduct.quantity} units</p>}
+      <label className="catalog-field">Adjustment<select value={adjustmentType} onChange={(event) => setAdjustmentType(event.target.value as typeof adjustmentType)}><option value="increase">Increase stock</option><option value="decrease">Decrease stock</option></select></label>
+      <label className="catalog-field">Units to {adjustmentType === 'increase' ? 'add' : 'remove'}<input type="number" min="1" step="1" required value={quantity} onChange={(event) => setQuantity(event.target.value)}/></label>
+      {selectedProduct && <p className="purchase-payment-confirmation">New stock: {Math.max(0, selectedProduct.quantity + (isValidQuantity ? delta : 0))} units</p>}
+      {error && <p className="catalog-form-error">{error}</p>}
+      {!products.length && <p className="catalog-form-error">Add a product before adjusting stock.</p>}
+      <div className="catalog-modal-actions"><button type="button" className="catalog-button catalog-button-light" onClick={onClose}>Cancel</button><button className="catalog-button catalog-button-primary" disabled={saving || !selectedProduct || !isValidQuantity || (adjustmentType === 'decrease' && quantityValue > (selectedProduct?.quantity ?? 0))}>{saving ? 'Updating…' : 'Update stock'}</button></div>
+    </form>
+  </div>;
+}
+
 function PurchasePaymentForm({ purchase, onClose, onSaved }: {
   purchase: Purchase;
   onClose: () => void;
@@ -170,6 +225,7 @@ export default function PurchasesDashboard({ initialSupplierId = null, onInitial
   const [historyMonth, setHistoryMonth] = useState(currentMonth);
   const [historyDate, setHistoryDate] = useState(currentDate);
   const [showForm, setShowForm] = useState(false);
+  const [showStockAdjustment, setShowStockAdjustment] = useState(false);
   const [busyPurchase, setBusyPurchase] = useState<number | null>(null);
   const [paymentPurchase, setPaymentPurchase] = useState<Purchase | null>(null);
   const [notice, setNotice] = useState('');
@@ -232,8 +288,14 @@ export default function PurchasesDashboard({ initialSupplierId = null, onInitial
     }
   }
 
+  async function saveStockAdjustment(product: Product, delta: number) {
+    setShowStockAdjustment(false);
+    await loadData();
+    setNotice(`${product.name} (ID ${product.id}) stock ${delta > 0 ? 'increased' : 'decreased'} by ${Math.abs(delta)} units.`);
+  }
+
   return <>
-    <section className="catalog-heading purchase-heading"><div><div className="catalog-breadcrumb">Operations <span>›</span> <b>Purchases</b></div><h1>Purchases</h1><p>Manage supplier orders and receive stock into inventory.</p></div><div className="catalog-heading-actions"><button className="catalog-button catalog-button-light" onClick={onOpenProducts}><Package size={14}/>Products</button><button className="catalog-button catalog-button-light" onClick={onOpenInventory}><Truck size={14}/>Inventory</button><button className="catalog-button catalog-button-primary" onClick={() => setShowForm(true)}><Plus size={15}/>New purchase</button></div></section>
+    <section className="catalog-heading purchase-heading"><div><div className="catalog-breadcrumb">Operations <span>›</span> <b>Purchases</b></div><h1>Purchases</h1><p>Manage supplier orders and receive stock into inventory.</p></div><div className="catalog-heading-actions"><button className="catalog-button catalog-button-light" onClick={onOpenProducts}><Package size={14}/>Products</button><button className="catalog-button catalog-button-light" onClick={onOpenInventory}><Truck size={14}/>Inventory</button><button className="catalog-button catalog-button-light" onClick={() => setShowStockAdjustment(true)} disabled={!products.length}><Plus size={15}/>Adjust stock</button><button className="catalog-button catalog-button-primary" onClick={() => setShowForm(true)}><Plus size={15}/>New purchase</button></div></section>
     {!loading && !error && summary && <section className="overview-metrics purchase-metrics" aria-label="Purchase metrics">
       <article><span>OPEN ORDERS</span><strong>{summary.open_orders.toLocaleString()}</strong><small><FileText size={13}/> Awaiting delivery</small></article>
       <article><span>OPEN ORDER VALUE</span><strong>{currency(summary.open_value)}</strong><small><Truck size={13}/> Supplier commitments</small></article>
@@ -259,6 +321,7 @@ export default function PurchasesDashboard({ initialSupplierId = null, onInitial
       </tbody></table></div><footer className="catalog-table-footer"><span>Showing <b>{filteredPurchases.length}</b> of <b>{purchases.length}</b> purchase orders</span><button className="catalog-clear" onClick={() => { setQuery(''); setStatusFilter('All orders'); setHistoryRange('1d'); setHistoryMonthMode(false); setHistoryDayMode(false); setHistoryMonth(currentMonth()); setHistoryDate(currentDate()); }}>Clear filters</button></footer></section>
     </>}
     {showForm && <PurchaseForm products={products} suppliers={suppliers} initialSupplierId={preselectedSupplierId} onClose={() => setShowForm(false)} onSaved={async () => { setShowForm(false); await loadData(); setNotice('Purchase order created. Stock will update when it is received.'); }}/>}
+    {showStockAdjustment && <PurchaseStockAdjustment products={products} onClose={() => setShowStockAdjustment(false)} onSaved={saveStockAdjustment}/>}
     {paymentPurchase && <PurchasePaymentForm purchase={paymentPurchase} onClose={() => setPaymentPurchase(null)} onSaved={async () => { const reference = paymentPurchase.reference; setPaymentPurchase(null); await loadData(); setNotice(`Payment recorded for ${reference}.`); }}/>}
   </>;
 }
