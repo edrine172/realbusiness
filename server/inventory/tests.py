@@ -14,7 +14,7 @@ from django.test import Client
 from django.utils import timezone
 from rest_framework.test import APITestCase
 
-from .models import BottleCustomerPO, BottleProduct, ClientMaterial, ClientMaterialPO, Category, Customer, CustomerLedgerEntry, Expense, ExpenseBudget, Notification, PayrollLine, PayrollRun, Product, Purchase, PurchaseItem, Sale, SaleItem, SecurityAuditEvent, StaffAttendance, StaffMember, StockMovement, Supplier, SupplierLedgerEntry, SystemSetting
+from .models import BottleCustomerPO, BottleDelivery, BottleProduct, ClientMaterial, ClientMaterialPO, ClientMaterialReceipt, Category, Customer, CustomerLedgerEntry, Expense, ExpenseBudget, Notification, PayrollLine, PayrollRun, Product, Purchase, PurchaseItem, Sale, SaleItem, SecurityAuditEvent, StaffAttendance, StaffMember, StockMovement, Supplier, SupplierLedgerEntry, SystemSetting
 
 
 class AdminAPITestCase(APITestCase):
@@ -627,6 +627,21 @@ class CustomerPOClientWorkflowTests(AdminAPITestCase):
         self.product.refresh_from_db()
         self.assertEqual(self.product.quantity, 8)
         self.assertEqual(StockMovement.objects.count(), 2)
+        movements = self.client.get('/api/movements/').data
+        self.assertEqual(len(movements), 2)
+        self.assertTrue(all(row['product'] == self.product.id for row in movements))
+        self.assertTrue(all(row['movement_type'] == StockMovement.MovementType.OUTBOUND for row in movements))
+        customer_history = self.client.get(f'/api/customers/{self.customer.id}/dashboard/').data
+        self.assertEqual(len(customer_history['bottle_purchase_orders']), 1)
+        self.assertEqual(customer_history['bottle_purchase_orders'][0]['reference'], 'CLIENT-BTL-001')
+        self.assertEqual(
+            customer_history['bottle_purchase_orders'][0]['items'][0]['delivered_quantity'],
+            12,
+        )
+        self.assertEqual(len(customer_history['bottle_purchase_orders'][0]['deliveries']), 2)
+        self.assertEqual(customer_history['lifetime_revenue'], '0.00')
+        self.assertEqual(customer_history['completed_orders'], 0)
+        self.assertEqual(customer_history['outstanding_balance'], '0.00')
 
     def test_bottle_delivery_rejects_overdelivery_and_insufficient_stock_atomically(self):
         created = self.client.post('/api/po-client/bottle-orders/', {
@@ -666,6 +681,68 @@ class CustomerPOClientWorkflowTests(AdminAPITestCase):
         self.assertEqual(self.product.quantity, 8)
         self.assertEqual(StockMovement.objects.count(), 1)
 
+    def test_deleting_bottle_po_returns_all_delivered_stock(self):
+        created = self.client.post('/api/po-client/bottle-orders/', {
+            'reference': 'CLIENT-BTL-DELETE',
+            'customer': self.customer.id,
+            'items': [{'product': self.bottle.id, 'quantity': 12, 'unit_price': '150.00'}],
+        }, format='json')
+        line_id = created.data['items'][0]['id']
+
+        for quantity in (3, 4):
+            delivery = self.client.post(
+                f"/api/po-client/bottle-orders/{created.data['id']}/deliver/",
+                {'items': [{'purchase_order_line': line_id, 'quantity': quantity}]},
+                format='json',
+            )
+            self.assertEqual(delivery.status_code, 200)
+
+        deleted = self.client.delete(f"/api/po-client/bottle-orders/{created.data['id']}/")
+
+        self.assertEqual(deleted.status_code, 204)
+        self.assertFalse(BottleCustomerPO.objects.filter(pk=created.data['id']).exists())
+        self.assertFalse(BottleDelivery.objects.filter(purchase_order_id=created.data['id']).exists())
+        self.product.refresh_from_db()
+        self.bottle.refresh_from_db()
+        self.assertEqual(self.product.quantity, 20)
+        self.assertEqual(self.bottle.quantity, 20)
+        return_movement = StockMovement.objects.get(
+            movement_type=StockMovement.MovementType.RETURN,
+            reference='CLIENT-BTL-DELETE-RETURN',
+        )
+        self.assertEqual(return_movement.product_id, self.product.id)
+        self.assertEqual(return_movement.quantity, 7)
+
+    def test_deleting_material_po_reverses_receipts_and_blocks_used_stock(self):
+        created = self.client.post('/api/po-client/material-orders/', {
+            'reference': 'CLIENT-SY-DELETE',
+            'customer': self.customer.id,
+            'material': self.material.id,
+            'quantity': '20.00',
+            'unit_price': '30.00',
+        }, format='json')
+        receipt = self.client.post(
+            f"/api/po-client/material-orders/{created.data['id']}/receive/",
+            {'quantity': '8.00'},
+            format='json',
+        )
+        self.assertEqual(receipt.status_code, 200)
+
+        self.material.quantity = Decimal('5.00')
+        self.material.save(update_fields=['quantity'])
+        blocked = self.client.delete(f"/api/po-client/material-orders/{created.data['id']}/")
+        self.assertEqual(blocked.status_code, 400)
+        self.assertTrue(ClientMaterialPO.objects.filter(pk=created.data['id']).exists())
+        self.assertTrue(ClientMaterialReceipt.objects.filter(purchase_order_id=created.data['id']).exists())
+
+        self.material.quantity = Decimal('10.00')
+        self.material.save(update_fields=['quantity'])
+        deleted = self.client.delete(f"/api/po-client/material-orders/{created.data['id']}/")
+        self.assertEqual(deleted.status_code, 204)
+        self.assertFalse(ClientMaterialPO.objects.filter(pk=created.data['id']).exists())
+        self.material.refresh_from_db()
+        self.assertEqual(self.material.quantity, Decimal('2.00'))
+
     def test_material_po_tracks_its_own_partial_receipts_and_rate(self):
         self.material.unit_price = Decimal('30.00')
         self.material.save(update_fields=['unit_price'])
@@ -689,6 +766,12 @@ class CustomerPOClientWorkflowTests(AdminAPITestCase):
         self.assertEqual(first_receipt.data['status'], ClientMaterialPO.Status.PARTIAL)
         self.assertEqual(first_receipt.data['remaining_quantity'], Decimal('65.00'))
         self.assertEqual(len(first_receipt.data['receipts']), 1)
+        customer_history = self.client.get(f'/api/customers/{self.customer.id}/dashboard/').data
+        self.assertEqual(len(customer_history['client_material_purchase_orders']), 1)
+        material_order = customer_history['client_material_purchase_orders'][0]
+        self.assertEqual(material_order['reference'], 'CLIENT-SY-001')
+        self.assertEqual(material_order['material_name'], self.material.name)
+        self.assertEqual(material_order['receipts'][0]['quantity'], '35.00')
 
         excessive_receipt = self.client.post(
             f"/api/po-client/material-orders/{created.data['id']}/receive/",
@@ -945,6 +1028,7 @@ class PointOfSaleTests(AdminAPITestCase):
             customer=self.customer.id,
             items=[{'product': self.product.id, 'quantity': 2, 'unit_price': '12.50'}],
         )
+
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.data['subtotal'], '25.00')
         self.assertEqual(response.data['discount_amount'], '2.50')
@@ -1676,6 +1760,7 @@ class DashboardSummaryPerformanceTests(AdminAPITestCase):
 
 class AccessControlDashboardTests(APITestCase):
     def setUp(self):
+        cache.clear()
         self.admin = get_user_model().objects.create_superuser(
             username='access-admin',
             email='admin@example.test',
@@ -1686,6 +1771,23 @@ class AccessControlDashboardTests(APITestCase):
         response = self.client.get('/api/access/dashboard/')
 
         self.assertIn(response.status_code, [401, 403])
+
+    def test_dashboard_cache_is_invalidated_when_access_data_changes(self):
+        self.client.force_authenticate(user=self.admin)
+        first_response = self.client.get('/api/access/dashboard/')
+        self.assertEqual(first_response.status_code, 200)
+        self.assertNotIn('cached-workspace-user', [user['username'] for user in first_response.data['users']])
+
+        created_user = self.client.post('/api/access/users/', {
+            'username': 'cached-workspace-user',
+            'password': 'temporary-password-123',
+            'is_active': True,
+            'is_staff': True,
+        }, format='json')
+        self.assertEqual(created_user.status_code, 201)
+
+        refreshed_response = self.client.get('/api/access/dashboard/')
+        self.assertIn('cached-workspace-user', [user['username'] for user in refreshed_response.data['users']])
 
     def test_superuser_can_create_superuser_and_status_cannot_be_changed_later(self):
         self.client.force_authenticate(user=self.admin)

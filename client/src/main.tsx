@@ -26,6 +26,7 @@ import './notifications.css';
 import './landing.css';
 import './account-entry.css';
 import './account-menu.css';
+import './popups.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

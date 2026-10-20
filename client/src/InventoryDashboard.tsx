@@ -4,6 +4,16 @@ import { api, formatCurrency as currency, type DashboardSummary, type InventoryA
 
 type AdjustmentType = InventoryAdjustment['adjustment_type'];
 type StockFilter = 'All stock' | 'In stock' | 'Low stock' | 'Out of stock';
+type InventoryHistoryEntry = {
+  id: string;
+  product_name: string;
+  product_sku: string;
+  movement_type: StockMovement['movement_type'] | 'client_receipt';
+  quantity: number;
+  note: string;
+  reference: string;
+  created_at: string;
+};
 const AUDIT_RANGES = [
   { value: '1d', label: '1 day', days: 1 },
   { value: '1w', label: '1 week', days: 7 },
@@ -93,7 +103,7 @@ export default function InventoryDashboard({ onOpenProducts, onOpenPurchases, on
 }) {
   const [products, setProducts] = useState<Product[]>([]);
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
-  const [auditMovements, setAuditMovements] = useState<StockMovement[]>([]);
+  const [auditMovements, setAuditMovements] = useState<InventoryHistoryEntry[]>([]);
   const [auditRange, setAuditRange] = useState<AuditRange>('1d');
   const [auditMonthMode, setAuditMonthMode] = useState(false);
   const [auditMonth, setAuditMonth] = useState(currentMonth);
@@ -112,8 +122,37 @@ export default function InventoryDashboard({ onOpenProducts, onOpenPurchases, on
     setAuditLoading(true);
     setAuditError('');
     try {
-      const movementRows = await api.movements(month ? undefined : daysForAuditRange(range), month);
-      if (requestId === auditRequest.current) setAuditMovements(movementRows.filter((movement) => movement.movement_type === 'adjustment'));
+      const [movementRows, materialOrders] = await Promise.all([
+        api.movements(month ? undefined : daysForAuditRange(range), month),
+        api.clientMaterialOrders(),
+      ]);
+      if (requestId === auditRequest.current) {
+        const rangeStart = new Date();
+        rangeStart.setHours(0, 0, 0, 0);
+        rangeStart.setDate(rangeStart.getDate() - daysForAuditRange(range) + 1);
+        const materialReceipts = materialOrders.flatMap((order) => order.receipts
+          .filter((receipt) => month
+            ? receipt.received_at.slice(0, 7) === month
+            : new Date(receipt.received_at).getTime() >= rangeStart.getTime())
+          .map((receipt) => ({
+            id: `client-receipt-${receipt.id}`,
+            product_name: order.material_name,
+            product_sku: order.reference,
+            movement_type: 'client_receipt' as const,
+            quantity: Number(receipt.quantity),
+            note: `Client-supplied stock received from ${order.customer_name}`,
+            reference: receipt.reference,
+            created_at: receipt.received_at,
+          })));
+        const stockMovements = movementRows.map((movement) => ({
+          ...movement,
+          id: `stock-movement-${movement.id}`,
+        }));
+        setAuditMovements(
+          [...stockMovements, ...materialReceipts]
+            .sort((left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime()),
+        );
+      }
     } catch (cause) {
       if (requestId === auditRequest.current) setAuditError(cause instanceof Error ? cause.message : 'Audit history could not be loaded.');
     } finally {
@@ -148,7 +187,21 @@ export default function InventoryDashboard({ onOpenProducts, onOpenPurchases, on
       return matchesTerm && matchesStatus && matchesCategory;
     }).sort((a, b) => a.quantity - b.quantity || a.name.localeCompare(b.name));
   }, [products, query, stockFilter, categoryFilter]);
-  const recentAdjustments = auditMovements;
+  const recentMovements = auditMovements;
+  const movementDelta = (movement: InventoryHistoryEntry) => {
+    if (movement.movement_type === 'outbound') return -Math.abs(movement.quantity);
+    if (movement.movement_type === 'inbound' || movement.movement_type === 'return' || movement.movement_type === 'client_receipt') {
+      return Math.abs(movement.quantity);
+    }
+    return movement.quantity;
+  };
+  const movementLabel = (movement: InventoryHistoryEntry) => ({
+    inbound: 'Purchase received',
+    outbound: 'Customer delivery',
+    adjustment: 'Stock adjustment',
+    return: 'Stock returned',
+    client_receipt: 'Client-supplied stock received',
+  })[movement.movement_type];
 
   return <>
     <section className="catalog-heading inventory-heading"><div><div className="catalog-breadcrumb">Operations <span>›</span> <b>Inventory</b></div><h1>Inventory Management</h1><p>Monitor stock levels, identify replenishment needs, and record audited adjustments.</p></div><div className="catalog-heading-actions"><button className="catalog-button catalog-button-light" onClick={onOpenProducts}><Package size={14}/>Products</button><button className="catalog-button catalog-button-light" onClick={onOpenPurchases}><Truck size={14}/>Purchases</button><button className="catalog-button catalog-button-primary" onClick={() => setAdjustingProduct(null)} disabled={!products.length}><Plus size={15}/>Adjust stock</button></div></section>
@@ -169,7 +222,7 @@ export default function InventoryDashboard({ onOpenProducts, onOpenPurchases, on
         })}
         {!filteredProducts.length && <tr><td colSpan={8} className="catalog-state">No products match this search or stock filter.</td></tr>}
       </tbody></table></div><footer className="catalog-table-footer"><span>Showing <b>{filteredProducts.length}</b> of <b>{products.length}</b> products</span><button className="catalog-clear" onClick={() => { setQuery(''); setStockFilter('All stock'); setCategoryFilter('All categories'); }}>Clear filters</button></footer></section>
-      <section className="overview-panel overview-activity-panel inventory-audit-panel"><div className="overview-panel-heading"><div><span>AUDIT TRAIL</span><h2>Stock adjustment history</h2></div><div className="overview-flow-controls"><label className="catalog-select inventory-audit-range"><select aria-label="Audit trail history range" value={auditMonthMode ? 'month' : auditRange} onChange={(event) => { if (event.target.value === 'month') { setAuditMonthMode(true); void loadAuditHistory(auditRange, auditMonth); } else { const range = event.target.value as AuditRange; setAuditMonthMode(false); setAuditRange(range); void loadAuditHistory(range); } }}><optgroup label="Rolling history">{AUDIT_RANGES.map((range) => <option key={range.value} value={range.value}>{range.label}</option>)}</optgroup><option value="month">Choose month &amp; year</option></select><ChevronDown size={13}/></label>{auditMonthMode && <input className="overview-flow-month-picker" type="month" aria-label="Select audit trail month and year" value={auditMonth} onChange={(event) => { setAuditMonth(event.target.value); if (event.target.value) void loadAuditHistory(auditRange, event.target.value); }}/>}</div></div>{auditLoading ? <p className="overview-empty">Loading audit history…</p> : auditError ? <div className="overview-empty">{auditError} <button className="catalog-button catalog-button-light" onClick={() => void loadAuditHistory(auditRange, auditMonthMode ? auditMonth : undefined)}>Retry</button></div> : recentAdjustments.length ? <div className="overview-activity-list">{recentAdjustments.map((movement) => <div className="overview-activity-row" key={movement.id}><span className="overview-movement-icon"><ClipboardCheck size={14}/></span><span className="overview-activity-copy"><strong>{movement.product_name} · {movement.product_sku}</strong><small>{movement.note || 'Stock adjustment'}{movement.reference ? ` · ${movement.reference}` : ''}</small></span><span className={`overview-movement-quantity ${movement.quantity > 0 ? 'is-inbound' : ''}`}>{movement.quantity > 0 ? '+' : ''}{movement.quantity}</span><time>{new Intl.DateTimeFormat('en-US', { year: 'numeric', month: 'short', day: 'numeric' }).format(new Date(movement.created_at))}</time></div>)}</div> : <p className="overview-empty">No stock adjustments in the selected period.</p>}</section>
+      <section className="overview-panel overview-activity-panel inventory-audit-panel"><div className="overview-panel-heading"><div><span>INVENTORY HISTORY</span><h2>Stock movement history</h2></div><div className="overview-flow-controls"><label className="catalog-select inventory-audit-range"><select aria-label="Inventory history range" value={auditMonthMode ? 'month' : auditRange} onChange={(event) => { if (event.target.value === 'month') { setAuditMonthMode(true); void loadAuditHistory(auditRange, auditMonth); } else { const range = event.target.value as AuditRange; setAuditMonthMode(false); setAuditRange(range); void loadAuditHistory(range); } }}><optgroup label="Rolling history">{AUDIT_RANGES.map((range) => <option key={range.value} value={range.value}>{range.label}</option>)}</optgroup><option value="month">Choose month &amp; year</option></select><ChevronDown size={13}/></label>{auditMonthMode && <input className="overview-flow-month-picker" type="month" aria-label="Select inventory history month and year" value={auditMonth} onChange={(event) => { setAuditMonth(event.target.value); if (event.target.value) void loadAuditHistory(auditRange, event.target.value); }}/>}</div></div>{auditLoading ? <p className="overview-empty">Loading inventory history…</p> : auditError ? <div className="overview-empty">{auditError} <button className="catalog-button catalog-button-light" onClick={() => void loadAuditHistory(auditRange, auditMonthMode ? auditMonth : undefined)}>Retry</button></div> : recentMovements.length ? <div className="overview-activity-list">{recentMovements.map((movement) => { const delta = movementDelta(movement); return <div className="overview-activity-row" key={movement.id}><span className="overview-movement-icon"><ClipboardCheck size={14}/></span><span className="overview-activity-copy"><strong>{movement.product_name} · {movement.product_sku}</strong><small>{movementLabel(movement)} · {movement.note || 'Inventory updated'}{movement.reference ? ` · ${movement.reference}` : ''}</small></span><span className={`overview-movement-quantity ${delta > 0 ? 'is-inbound' : ''}`}>{delta > 0 ? '+' : ''}{delta}</span><time>{new Intl.DateTimeFormat('en-US', { year: 'numeric', month: 'short', day: 'numeric' }).format(new Date(movement.created_at))}</time></div>; })}</div> : <p className="overview-empty">No stock movements in the selected period.</p>}</section>
     </>}
     {adjustingProduct !== undefined && <StockAdjustmentForm key={adjustingProduct?.id ?? 'new'} product={adjustingProduct} products={products} onClose={() => setAdjustingProduct(undefined)} onSaved={async () => { setAdjustingProduct(undefined); await loadData(); await onInventoryChanged(); }}/ >}
   </>;

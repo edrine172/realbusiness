@@ -32,7 +32,7 @@ function LoginPanel({ onLogin }: { onLogin: (username: string, password: string)
   return <div className="access-login-wrap"><form className="access-login-panel" onSubmit={submit}><span className="access-login-icon"><ShieldCheck size={22}/></span><span className="access-eyebrow">STOCKPULSE ADMINISTRATION</span><h1>Users &amp; Access</h1><p>Sign in with a Django superuser account to manage users and roles.</p><label className="catalog-field">Username<input autoComplete="username" required value={username} onChange={(event) => setUsername(event.target.value)}/></label><label className="catalog-field">Password<input type="password" autoComplete="current-password" required value={password} onChange={(event) => setPassword(event.target.value)}/></label>{error && <p className="catalog-form-error">{error}</p>}<button className="catalog-button catalog-button-primary access-login-button" disabled={busy}>{busy ? 'Signing in…' : 'Sign in securely'}</button><small>Administrator accounts are created with Django’s createsuperuser command.</small></form></div>;
 }
 
-function UserForm({ groups, user, onClose, onSaved }: { groups: AccessGroup[]; user?: AccessUser | null; onClose: () => void; onSaved: (user: AccessUser) => Promise<void> }) {
+function UserForm({ groups, user, canCreateSuperusers, onClose, onSaved }: { groups: AccessGroup[]; user?: AccessUser | null; canCreateSuperusers: boolean; onClose: () => void; onSaved: (user: AccessUser) => Promise<void> }) {
   const [draft, setDraft] = useState(() => ({
     username: user?.username ?? '',
     email: user?.email ?? '',
@@ -40,6 +40,7 @@ function UserForm({ groups, user, onClose, onSaved }: { groups: AccessGroup[]; u
     last_name: user?.last_name ?? '',
     password: '',
     is_staff: user?.is_staff ?? true,
+    is_superuser: false,
     groups: user?.groups.map((group) => typeof group === 'number' ? group : group.id) ?? [] as number[],
   }));
   const [error, setError] = useState('');
@@ -60,7 +61,12 @@ function UserForm({ groups, user, onClose, onSaved }: { groups: AccessGroup[]; u
           groups: draft.groups,
           ...(draft.password ? { password: draft.password } : {}),
         })
-        : await api.createAccessUser({ ...draft, is_active: true });
+        : await api.createAccessUser({
+          ...draft,
+          is_active: true,
+          is_staff: draft.is_staff || draft.is_superuser,
+          groups: draft.is_superuser ? [] : draft.groups,
+        });
       await onSaved(saved);
     }
     catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not invite this user.'); }
@@ -85,14 +91,19 @@ function UserForm({ groups, user, onClose, onSaved }: { groups: AccessGroup[]; u
       </label>
       <fieldset className="access-group-options">
         <legend>Account access</legend>
-        <label><input type="checkbox" checked={draft.is_staff} onChange={(event) => setDraft((current) => ({ ...current, is_staff: event.target.checked }))}/>Allow dashboard sign-in</label>
-        <small>Dashboard access is also limited by the permissions granted to the assigned roles.</small>
+        <label><input type="checkbox" checked={draft.is_staff || draft.is_superuser} disabled={draft.is_superuser} onChange={(event) => setDraft((current) => ({ ...current, is_staff: event.target.checked }))}/>Allow dashboard sign-in</label>
+        <small>{draft.is_superuser ? 'Superadmins always have dashboard access.' : 'Dashboard access is also limited by the permissions granted to the assigned roles.'}</small>
       </fieldset>
-      <fieldset className="access-group-options">
+      {canCreateSuperusers && !user && <fieldset className="access-group-options">
+        <legend>Administrator access</legend>
+        <label><input type="checkbox" checked={draft.is_superuser} onChange={(event) => setDraft((current) => ({ ...current, is_superuser: event.target.checked, is_staff: event.target.checked || current.is_staff, groups: event.target.checked ? [] : current.groups }))}/>Create as superadmin</label>
+        <small>Superadmins have unrestricted access to all system data, users, and settings.</small>
+      </fieldset>}
+      {!draft.is_superuser && <fieldset className="access-group-options">
         <legend>Assign roles</legend>
         {groups.map((group) => <label key={group.id}><input type="checkbox" checked={draft.groups.includes(group.id)} onChange={() => toggleGroup(group.id)}/>{group.name}</label>)}
         {!groups.length && <small>Create a role before assigning groups.</small>}
-      </fieldset>
+      </fieldset>}
       {error && <p className="catalog-form-error">{error}</p>}
       <div className="catalog-modal-actions">
         <button type="button" className="catalog-button catalog-button-light" onClick={onClose}>Cancel</button>
@@ -229,7 +240,7 @@ export default function UsersDashboard({ onSignOut }: { onSignOut: () => Promise
 
     {tab === 'audit' && <section className="overview-panel access-audit-panel"><div className="overview-panel-heading"><div><span>IMMUTABLE SECURITY LOG</span><h2>Role governance trail</h2></div><span className="access-audit-live"><i/>Live audit log</span></div>{dashboard.audit_log.map((event) => <article className="access-audit-entry" key={event.id}><span className="access-audit-icon"><KeyRound size={13}/></span><div><strong>{event.action.replace(/[._]/g, ' ')}</strong><small>{event.actor_name} · {event.target_type} {event.target_id}{Object.keys(event.details).length ? ` · ${JSON.stringify(event.details)}` : ''}</small></div><time>{formatDate(event.created_at)}</time></article>)}{!dashboard.audit_log.length && <p className="overview-empty">User, group, and permission changes will be recorded here.</p>}</section>}
 
-    {(showUserForm || editingUser) && <UserForm user={editingUser} groups={dashboard.groups} onClose={() => { setShowUserForm(false); setEditingUser(null); }} onSaved={async (user) => { setShowUserForm(false); setEditingUser(null); await loadDashboard(); setTab('users'); setNotice(`${user.username} access updated.`); }}/ >}
+    {(showUserForm || editingUser) && <UserForm user={editingUser} groups={dashboard.groups} canCreateSuperusers={admin.is_superuser} onClose={() => { setShowUserForm(false); setEditingUser(null); }} onSaved={async (user) => { setShowUserForm(false); setEditingUser(null); await loadDashboard(); setTab('users'); setNotice(`${user.username} access updated.`); }}/ >}
     {showRoleForm && <RoleForm onClose={() => setShowRoleForm(false)} onSaved={createRole}/>}
   </>;
 }

@@ -5,6 +5,7 @@ from django.contrib.auth import authenticate, get_user_model, login, logout, upd
 from django.contrib.auth.models import Group, Permission
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.validators import validate_email
+from django.core.cache import cache
 from django.contrib.sessions.models import Session
 from django.http import JsonResponse
 from django.middleware.csrf import get_token
@@ -21,6 +22,8 @@ from rest_framework.response import Response
 from .models import SecurityAuditEvent
 
 User = get_user_model()
+ACCESS_DASHBOARD_CACHE_KEY = 'access_dashboard_payload'
+ACCESS_DASHBOARD_CACHE_TIMEOUT = 30
 
 
 def _user_payload(user):
@@ -63,8 +66,8 @@ def access_login(request):
 
 @require_GET
 def access_session(request):
-    if not request.user.is_authenticated or not request.user.is_active or not request.user.is_superuser:
-        return JsonResponse({'detail': 'Administrator sign-in required.'}, status=401)
+    if not request.user.is_authenticated or not request.user.is_active or not request.user.is_staff:
+        return JsonResponse({'detail': 'Workspace sign-in required.'}, status=401)
     return JsonResponse({'user': _user_payload(request.user)})
 
 
@@ -109,9 +112,11 @@ def account_register(request):
         first_name=str(data.get('first_name', '')).strip()[:150],
         last_name=str(data.get('last_name', '')).strip()[:150],
         password=password,
-        is_staff=False,
+        is_staff=True,
         is_superuser=False,
     )
+    user.groups.add(_registered_user_group())
+    login(request, user)
     _audit(user, 'session.registered', 'user', user.pk)
     return JsonResponse({'user': _user_payload(user), 'csrf_token': get_token(request)}, status=201)
 
@@ -152,12 +157,20 @@ def account_logout(request):
 
 class IsAdmin(BasePermission):
     def has_permission(self, request, view):
-        return bool(
+        if not (
             request.user
             and request.user.is_authenticated
             and request.user.is_active
-            and request.user.is_superuser
-        )
+            and request.user.is_staff
+        ):
+            return False
+        return request.user.is_superuser or request.user.has_perm('inventory.manage_access')
+
+
+def _registered_user_group():
+    group, _ = Group.objects.get_or_create(name='Registered workspace users')
+    group.permissions.add(*Permission.objects.filter(content_type__app_label='inventory'))
+    return group
 
 
 class SecurityAuditSerializer(serializers.ModelSerializer):
@@ -175,6 +188,7 @@ class AccessUserSerializer(serializers.ModelSerializer):
     groups = serializers.PrimaryKeyRelatedField(queryset=Group.objects.all(), many=True, required=False)
     group_names = serializers.SerializerMethodField()
     password = serializers.CharField(write_only=True, required=False, min_length=8)
+    is_superuser = serializers.BooleanField(required=False)
 
     def get_group_names(self, user):
         return list(user.groups.order_by('name').values_list('name', flat=True))
@@ -182,18 +196,31 @@ class AccessUserSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         if self.instance is None and not attrs.get('password'):
             raise serializers.ValidationError({'password': 'A temporary password of at least 8 characters is required.'})
-        if attrs.get('is_superuser'):
-            raise serializers.ValidationError({'is_superuser': 'Superuser status must be assigned through Django administration.'})
+        if 'is_superuser' in attrs:
+            if self.instance is not None:
+                raise serializers.ValidationError({'is_superuser': 'Superuser status cannot be changed after account creation.'})
+            if attrs['is_superuser'] and not self.context['request'].user.is_superuser:
+                raise serializers.ValidationError({'is_superuser': 'Only a superuser can create another superuser.'})
         return attrs
 
     def create(self, validated_data):
         groups = validated_data.pop('groups', [])
         password = validated_data.pop('password')
+        is_superuser = validated_data.pop('is_superuser', False)
+        if is_superuser:
+            validated_data['is_staff'] = True
+        validated_data['is_superuser'] = is_superuser
         user = User(**validated_data)
         user.set_password(password)
         user.save()
         user.groups.set(groups)
-        _audit(self.context['request'].user, 'user.created', 'user', user.pk, {'username': user.get_username()})
+        _audit(
+            self.context['request'].user,
+            'user.created',
+            'user',
+            user.pk,
+            {'username': user.get_username(), 'is_superuser': user.is_superuser},
+        )
         return user
 
     def update(self, instance, validated_data):
@@ -233,7 +260,7 @@ class AccessUserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ['id', 'username', 'email', 'first_name', 'last_name', 'is_active', 'is_staff', 'is_superuser', 'last_login', 'date_joined', 'groups', 'group_names', 'password']
-        read_only_fields = ['id', 'is_superuser', 'last_login', 'date_joined']
+        read_only_fields = ['id', 'last_login', 'date_joined']
 
 
 class AccessGroupSerializer(serializers.ModelSerializer):
@@ -280,6 +307,7 @@ def _audit(actor, action, target_type, target_id='', details=None):
         target_id=str(target_id),
         details=details or {},
     )
+    cache.delete(ACCESS_DASHBOARD_CACHE_KEY)
 
 
 class AccessUserViewSet(viewsets.ModelViewSet):
@@ -320,27 +348,48 @@ class AccessDashboardViewSet(viewsets.ViewSet):
     permission_classes = [IsAdmin]
 
     def list(self, request):
-        return Response({
-            'active_users': User.objects.filter(is_active=True).count(),
-            'total_users': User.objects.count(),
-            'role_count': Group.objects.count(),
-            'disabled_users': User.objects.filter(is_active=False).count(),
-            'staff_users': User.objects.filter(is_staff=True).count(),
-            'permission_count': Permission.objects.filter(content_type__app_label='inventory').count(),
-            'users': AccessUserSerializer(User.objects.prefetch_related('groups').order_by('username'), many=True, context={'request': request}).data,
-            'groups': AccessGroupSerializer(Group.objects.prefetch_related('permissions__content_type', 'user_set').order_by('name'), many=True, context={'request': request}).data,
-            'permissions': [
-                {
-                    'id': permission.id,
-                    'codename': permission.codename,
-                    'model': permission.content_type.model,
-                    'label': str(permission.name),
-                    'action': permission.codename.split('_', 1)[0],
-                }
-                for permission in Permission.objects.filter(content_type__app_label='inventory').select_related('content_type').order_by('content_type__model', 'codename')
-            ],
-            'audit_log': SecurityAuditSerializer(SecurityAuditEvent.objects.select_related('actor')[:30], many=True).data,
-        })
+        dashboard = cache.get(ACCESS_DASHBOARD_CACHE_KEY)
+        if dashboard is None:
+            dashboard = {
+                'active_users': User.objects.filter(is_active=True).count(),
+                'total_users': User.objects.count(),
+                'role_count': Group.objects.count(),
+                'disabled_users': User.objects.filter(is_active=False).count(),
+                'staff_users': User.objects.filter(is_staff=True).count(),
+                'permission_count': Permission.objects.filter(content_type__app_label='inventory').count(),
+                'users': AccessUserSerializer(
+                    User.objects.prefetch_related('groups').order_by('username'),
+                    many=True,
+                    context={'request': request},
+                ).data,
+                'groups': AccessGroupSerializer(
+                    Group.objects.prefetch_related('permissions__content_type', 'user_set').order_by('name'),
+                    many=True,
+                    context={'request': request},
+                ).data,
+                'permissions': [
+                    {
+                        'id': permission.id,
+                        'codename': permission.codename,
+                        'model': permission.content_type.model,
+                        'label': str(permission.name),
+                        'action': permission.codename.split('_', 1)[0],
+                    }
+                    for permission in Permission.objects.filter(
+                        content_type__app_label='inventory',
+                    ).select_related('content_type').order_by('content_type__model', 'codename')
+                ],
+                'audit_log': SecurityAuditSerializer(
+                    SecurityAuditEvent.objects.select_related('actor')[:30],
+                    many=True,
+                ).data,
+            }
+            cache.set(
+                ACCESS_DASHBOARD_CACHE_KEY,
+                dashboard,
+                timeout=ACCESS_DASHBOARD_CACHE_TIMEOUT,
+            )
+        return Response(dashboard)
 
 
 @method_decorator(csrf_protect, name='dispatch')

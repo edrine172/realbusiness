@@ -303,6 +303,8 @@ export interface CustomerDashboardData {
   account_payments: string;
   account_credits: string;
   sales: Sale[];
+  bottle_purchase_orders: BottleCustomerPO[];
+  client_material_purchase_orders: ClientMaterialPO[];
   ledger_entries: CustomerLedgerEntry[];
 }
 
@@ -774,7 +776,7 @@ export const api = {
     request<SystemSettingsData>('/settings/', { method: 'PATCH', body: JSON.stringify({ settings }) }),
   exchangeRates: () => request<ExchangeRatesData>('/exchange-rates/'),
   accessUsers: () => request<AccessUser[]>('/access/users/'),
-  createAccessUser: (user: { username: string; email: string; first_name: string; last_name: string; password: string; is_active: boolean; is_staff: boolean; groups: number[] }) =>
+  createAccessUser: (user: { username: string; email: string; first_name: string; last_name: string; password: string; is_active: boolean; is_staff: boolean; is_superuser: boolean; groups: number[] }) =>
     request<AccessUser>('/access/users/', { method: 'POST', body: JSON.stringify(user) }),
   updateAccessUser: (id: number, user: Partial<Pick<AccessUser, 'username' | 'email' | 'first_name' | 'last_name' | 'is_active' | 'is_staff'>> & { groups?: number[]; password?: string }) =>
     request<AccessUser>(`/access/users/${id}/`, { method: 'PATCH', body: JSON.stringify(user) }),
@@ -811,7 +813,7 @@ export const api = {
     request<StockMovement>('/inventory/adjustments/', { method: 'POST', body: JSON.stringify(adjustment) }),
   purchaseSummary: () => request<PurchaseSummary>('/purchases/summary/'),
   purchases: () => request<Purchase[]>('/purchases/'),
-  createPurchase: (purchase: Pick<Purchase, 'supplier' | 'notes'> & { expected_delivery?: string | null; items: Array<Pick<PurchaseItem, 'product' | 'quantity' | 'unit_cost'>> }) =>
+  createPurchase: (purchase: Pick<Purchase, 'supplier' | 'notes'> & { reference?: string; expected_delivery?: string | null; items: Array<Pick<PurchaseItem, 'product' | 'quantity' | 'unit_cost'>> }) =>
     request<Purchase>('/purchases/', { method: 'POST', body: JSON.stringify(purchase) }),
   receivePurchase: (id: number) =>
     request<Purchase>(`/purchases/${id}/receive/`, { method: 'POST', body: JSON.stringify({}) }),
@@ -821,6 +823,8 @@ export const api = {
   bottleOrders: () => request<BottleCustomerPO[]>('/po-client/bottle-orders/'),
   createBottleOrder: (order: { reference: string; customer: number; expected_delivery?: string | null; notes?: string; items: Array<{ product: number; quantity: number; unit_price: string }> }) =>
     request<BottleCustomerPO>('/po-client/bottle-orders/', { method: 'POST', body: JSON.stringify(order) }),
+  deleteBottleOrder: (id: number) =>
+    request<void>(`/po-client/bottle-orders/${id}/`, { method: 'DELETE' }),
   deliverBottleOrder: (id: number, delivery: { items: Array<{ purchase_order_line: number; quantity: number }>; notes?: string }) =>
     request<BottleCustomerPO>(`/po-client/bottle-orders/${id}/deliver/`, { method: 'POST', body: JSON.stringify(delivery) }),
   clientMaterials: () => request<ClientMaterial[]>('/po-client/materials/'),
@@ -829,6 +833,8 @@ export const api = {
   clientMaterialOrders: () => request<ClientMaterialPO[]>('/po-client/material-orders/'),
   createClientMaterialOrder: (order: { reference: string; customer: number; material: number; quantity: string; unit_price: string; expected_delivery?: string | null; notes?: string }) =>
     request<ClientMaterialPO>('/po-client/material-orders/', { method: 'POST', body: JSON.stringify(order) }),
+  deleteClientMaterialOrder: (id: number) =>
+    request<void>(`/po-client/material-orders/${id}/`, { method: 'DELETE' }),
   receiveClientMaterialOrder: (id: number, receipt: { quantity: string; notes?: string }) =>
     request<ClientMaterialPO>(`/po-client/material-orders/${id}/receive/`, { method: 'POST', body: JSON.stringify(receipt) }),
   payPurchase: (id: number, payment: { amount: string; reference?: string; note?: string }) =>

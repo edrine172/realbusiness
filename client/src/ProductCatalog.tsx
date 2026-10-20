@@ -25,6 +25,7 @@ import type { NotificationDashboard } from './api';
 import HelpCenter from './HelpCenter';
 import AccountEntry from './AccountEntry';
 import LandingPage from './LandingPage';
+import { useConfirmation } from './ConfirmDialog';
 
 type ProductDraft = Omit<Product, 'id' | 'category_name' | 'supplier_name' | 'updated_at' | 'created_at' | 'is_active'>;
 type StatusFilter = 'All statuses' | 'In stock' | 'Low stock' | 'Out of stock';
@@ -120,6 +121,7 @@ function CategoryManager({ categories, onClose, onChanged }: {
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [error, setError] = useState('');
+  const { confirm, dialog } = useConfirmation();
 
   async function createCategory(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -139,7 +141,13 @@ function CategoryManager({ categories, onClose, onChanged }: {
   }
 
   async function deleteCategory(category: Category) {
-    if (!window.confirm(`Delete the "${category.name}" category?`)) return;
+    const confirmed = await confirm({
+      title: 'Delete category?',
+      message: `Delete the "${category.name}" category?`,
+      confirmLabel: 'Delete category',
+      variant: 'danger',
+    });
+    if (!confirmed) return;
     setDeletingId(category.id);
     setError('');
     try {
@@ -160,10 +168,12 @@ function CategoryManager({ categories, onClose, onChanged }: {
       <div className="category-manager-list" aria-label="Product categories">{categories.map((category) => <div className="category-manager-row" key={category.id}><span>{category.name}</span><button className="catalog-row-action danger" type="button" title={`Delete ${category.name}`} aria-label={`Delete ${category.name}`} disabled={deletingId === category.id} onClick={() => void deleteCategory(category)}><Trash2 size={14}/></button></div>)}{categories.length === 0 && <p className="catalog-empty">No product categories yet.</p>}</div>
       <div className="catalog-modal-actions"><button type="button" className="catalog-button catalog-button-light" onClick={onClose}>Done</button></div>
     </section>
+    {dialog}
   </div>;
 }
 
 export default function ProductCatalog() {
+  const { confirm, dialog } = useConfirmation();
   const currencyDisplay = useSyncExternalStore(subscribeCurrencyDisplay, getCurrencyDisplay, getCurrencyDisplay);
   const [activeView, setActiveViewState] = useState<NotificationDashboard | 'home' | 'auth'>('home');
   const [accountEntryMode, setAccountEntryMode] = useState<'sign-in' | 'sign-up'>('sign-in');
@@ -248,7 +258,7 @@ export default function ProductCatalog() {
       setAccessState('signedOut');
       setMountedDashboards(new Set());
       const message = cause instanceof Error ? cause.message : 'Administrator sign-in is required.';
-      if (!/administrator sign-in required|authentication credentials/i.test(message)) setAccessError(message);
+      if (!/workspace sign-in required|administrator sign-in required|authentication credentials/i.test(message)) setAccessError(message);
     });
   }, [activeView, accessState]);
 
@@ -354,7 +364,14 @@ export default function ProductCatalog() {
     } catch (cause) { notify(cause instanceof Error ? cause.message : 'Could not update selected products.'); }
   }
   async function deleteSelected() {
-    if (!selected.length || !window.confirm(`Permanently delete ${selected.length} selected product${selected.length === 1 ? '' : 's'}?`)) return;
+    if (!selected.length) return;
+    const confirmed = await confirm({
+      title: 'Delete selected products?',
+      message: `Permanently delete ${selected.length} selected product${selected.length === 1 ? '' : 's'}?`,
+      confirmLabel: 'Delete products',
+      variant: 'danger',
+    });
+    if (!confirmed) return;
     try { await Promise.all(selected.map((id) => api.deleteProduct(id))); await loadData(); setSelected([]); notify('Selected products deleted.'); }
     catch (cause) { notify(cause instanceof Error ? cause.message : 'Could not delete selected products.'); }
   }
@@ -377,7 +394,13 @@ export default function ProductCatalog() {
     } catch (cause) { notify(cause instanceof Error ? cause.message : 'Could not update product availability.'); }
   }
   async function deleteProduct(product: Product) {
-    if (!window.confirm(`Permanently delete ${product.name} (${product.sku})? Products with sales or inventory history should be deactivated instead.`)) return;
+    const confirmed = await confirm({
+      title: 'Permanently delete product?',
+      message: `Permanently delete ${product.name} (${product.sku})? Products with sales or inventory history should be deactivated instead.`,
+      confirmLabel: 'Delete product',
+      variant: 'danger',
+    });
+    if (!confirmed) return;
     try {
       await api.deleteProduct(product.id);
       await loadData();
@@ -510,5 +533,6 @@ export default function ProductCatalog() {
     {modalProduct !== undefined && <ProductForm key={modalProduct?.id ?? 'new'} product={modalProduct} categories={categories} suppliers={suppliers} onClose={() => setModalProduct(undefined)} onSaved={async () => { setModalProduct(undefined); await loadData(); notify('Product saved to inventory.'); }}/ >}
     {showCategoryManager && <CategoryManager categories={categories} onClose={() => setShowCategoryManager(false)} onChanged={loadData}/>}
     {helpOpen && <HelpCenter onClose={() => setHelpOpen(false)} onNavigate={(view) => { setActiveView(view); setHelpOpen(false); }}/ >}
+    {dialog}
   </div>;
 }

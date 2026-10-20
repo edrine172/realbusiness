@@ -421,6 +421,10 @@ class SecurityAuditEvent(models.Model):
     class Meta:
         ordering = ['-created_at']
         permissions = [('manage_access', 'Can manage workspace access')]
+        indexes = [
+            models.Index(fields=['-created_at'], name='sec_audit_created_idx'),
+            models.Index(fields=['target_type', '-created_at'], name='sec_audit_target_created_idx'),
+        ]
 
     def __str__(self):
         return f'{self.action} · {self.target_type} {self.target_id}'

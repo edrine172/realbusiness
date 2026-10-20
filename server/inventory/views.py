@@ -12,7 +12,7 @@ from django.db.models import Case, Count, DecimalField, ExpressionWrapper, F, Q,
 from django.db.models.functions import Abs, TruncDate
 from django.utils import timezone
 from rest_framework.filters import OrderingFilter, SearchFilter
-from rest_framework import viewsets
+from rest_framework import status, viewsets
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -301,6 +301,20 @@ class CustomerViewSet(viewsets.ModelViewSet):
                 sales[:50],
                 many=True,
                 context={'sale_paid_amounts': paid_by_sale},
+            ).data,
+            'bottle_purchase_orders': BottleCustomerPOSerializer(
+                BottleCustomerPO.objects.filter(customer=customer).select_related('customer').prefetch_related(
+                    'items__product__inventory_product',
+                    'items__delivery_lines',
+                    'deliveries__items__purchase_order_line__product__inventory_product',
+                )[:50],
+                many=True,
+            ).data,
+            'client_material_purchase_orders': ClientMaterialPOSerializer(
+                ClientMaterialPO.objects.filter(customer=customer)
+                .select_related('customer', 'material')
+                .prefetch_related('receipts')[:50],
+                many=True,
             ).data,
             'ledger_entries': CustomerLedgerEntrySerializer(
                 customer.ledger_entries.select_related('sale')[:20],
@@ -1002,7 +1016,42 @@ class BottleCustomerPOViewSet(viewsets.ModelViewSet):
         'deliveries__items__purchase_order_line__product__inventory_product',
     ).all()
     serializer_class = BottleCustomerPOSerializer
-    http_method_names = ['get', 'post', 'head', 'options']
+    http_method_names = ['get', 'post', 'delete', 'head', 'options']
+
+    @transaction.atomic
+    def destroy(self, request, *args, **kwargs):
+        purchase_order = BottleCustomerPO.objects.select_for_update().get(pk=self.get_object().pk)
+        delivered_by_product = BottleDeliveryLine.objects.filter(
+            purchase_order_line__purchase_order=purchase_order,
+        ).values(
+            'purchase_order_line__product__inventory_product_id',
+        ).annotate(
+            total=Sum('quantity'),
+        ).order_by('purchase_order_line__product__inventory_product_id')
+
+        for row in delivered_by_product:
+            quantity = row['total']
+            product = Product.objects.select_for_update().get(
+                pk=row['purchase_order_line__product__inventory_product_id'],
+            )
+            product.quantity += quantity
+            product.save(update_fields=['quantity', 'updated_at'])
+            BottleProduct.objects.filter(inventory_product_id=product.id).update(quantity=product.quantity)
+            StockMovement.objects.create(
+                product=product,
+                movement_type=StockMovement.MovementType.RETURN,
+                quantity=quantity,
+                note=f'Returned from cancelled PO {purchase_order.reference}',
+                reference=f'{purchase_order.reference}-RETURN',
+            )
+
+        BottleDeliveryLine.objects.filter(
+            purchase_order_line__purchase_order=purchase_order,
+        ).delete()
+        purchase_order.deliveries.all().delete()
+        purchase_order.items.all().delete()
+        purchase_order.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
     @action(detail=True, methods=['post'])
     @transaction.atomic
@@ -1081,7 +1130,26 @@ class ClientMaterialViewSet(viewsets.ModelViewSet):
 class ClientMaterialPOViewSet(viewsets.ModelViewSet):
     queryset = ClientMaterialPO.objects.select_related('customer', 'material').prefetch_related('receipts').all()
     serializer_class = ClientMaterialPOSerializer
-    http_method_names = ['get', 'post', 'head', 'options']
+    http_method_names = ['get', 'post', 'delete', 'head', 'options']
+
+    @transaction.atomic
+    def destroy(self, request, *args, **kwargs):
+        purchase_order = ClientMaterialPO.objects.select_for_update().get(pk=self.get_object().pk)
+        material = ClientMaterial.objects.select_for_update().get(pk=purchase_order.material_id)
+        received = purchase_order.receipts.aggregate(total=Sum('quantity'))['total'] or Decimal('0')
+        if material.quantity < received:
+            raise ValidationError({
+                'purchase_order': (
+                    f'Cannot delete this PO because {received - material.quantity} '
+                    f'{material.unit} of its received stock has already been used.'
+                ),
+            })
+
+        material.quantity -= received
+        material.save(update_fields=['quantity'])
+        purchase_order.receipts.all().delete()
+        purchase_order.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
     @action(detail=True, methods=['post'])
     @transaction.atomic
@@ -1130,7 +1198,6 @@ def checkout(request):
             raise ValidationError({'items': 'One or more products are no longer available.'})
         if product.quantity < item['quantity']:
             raise ValidationError({'items': f'Only {product.quantity} units of {product.sku} are in stock.'})
-
     unit_prices = {
         item['product'].id: item.get('unit_price', products[item['product'].id].unit_price)
         for item in cart_items

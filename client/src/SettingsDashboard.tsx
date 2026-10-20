@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { api, getCurrencyDisplay, setCurrencyDisplay, type AccessUser, type ExchangeRatesData, type SettingsAuditEvent, type SystemSettings } from './api';
 import FileActionMenu from './FileActionMenu';
+import { useConfirmation } from './ConfirmDialog';
 
 type DashboardTarget = 'overview' | 'products' | 'inventory' | 'purchases' | 'pos' | 'sales' | 'reports' | 'customers' | 'suppliers' | 'expenses' | 'users';
 
@@ -28,6 +29,7 @@ function AuditValue({ value }: { value: unknown }) {
 }
 
 export default function SettingsDashboard({ onNavigate, onSignOut }: { onNavigate: (target: DashboardTarget) => void; onSignOut: () => Promise<void> }) {
+  const { confirm, dialog } = useConfirmation();
   const [settings, setSettings] = useState<SystemSettings | null>(null);
   const [exchangeRates, setExchangeRates] = useState<ExchangeRatesData | null>(null);
   const [rateLoading, setRateLoading] = useState(false);
@@ -152,7 +154,12 @@ export default function SettingsDashboard({ onNavigate, onSignOut }: { onNavigat
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Choose a valid StockPulse settings JSON file.');
       const candidate = 'settings' in parsed ? (parsed as { settings: unknown }).settings : parsed;
       if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) throw new Error('The JSON file does not contain a settings object.');
-      if (!window.confirm('Import these settings and replace the current values?')) return;
+      const confirmed = await confirm({
+        title: 'Replace current settings?',
+        message: 'Import these settings and replace the current values?',
+        confirmLabel: 'Import settings',
+      });
+      if (!confirmed) return;
       setSaving(true);
       const response = await api.updateSystemSettings(candidate as Partial<SystemSettings>);
       setSettings(response.settings);
@@ -276,5 +283,6 @@ export default function SettingsDashboard({ onNavigate, onSignOut }: { onNavigat
         }, disabled: !settings || saving }]}/></section>
       </aside>
     </div>
+    {dialog}
   </div>;
 }

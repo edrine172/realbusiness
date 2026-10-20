@@ -31,7 +31,20 @@ npm install --prefix client
 npm start --prefix client
 ```
 
-Open the local URL printed by Vite. The frontend uses `VITE_API_BASE_URL` (default `http://127.0.0.1:8000/api`) to connect to Django. Copy `client/.env.example` to `client/.env.local` to override it.
+Open the local URL printed by Vite. During local development the frontend defaults to `http://localhost:8000/api`; copy `client/.env.example` to `client/.env.local` to override it.
+
+The production build uses `client/.env.production` to connect to the Render API. In Vercel, ensure `VITE_API_BASE_URL` matches your Render API URL and ends in `/api` (currently `https://ssekanasystems.onrender.com/api`) for Production, Preview, and Development as needed, then redeploy. Production builds do not fall back to localhost.
+
+## Deploy with Supabase, Render, and Vercel
+
+The Django API uses PostgreSQL through `DATABASE_URL`; connect Render directly to Supabase's PostgreSQL database, not to Supabase's REST API. Keep the database URL and password in Render environment variables only.
+
+1. Create a Supabase project and wait until its database is ready. In Supabase, open **Connect** and copy the PostgreSQL **Session pooler** connection string. The session pooler is suitable for Render's IPv4 network. Use the connection string as `DATABASE_URL` and ensure it includes `?sslmode=require` (or add `&sslmode=require` if the URL already has query parameters). URL-encode special characters in the password. Never put this URL in the frontend or commit it.
+2. In Render, open the existing Django web service (`ssekanasystems`) and set `DATABASE_URL` to that Supabase connection string. Also set `DEBUG=false`, a strong random `SECRET_KEY`, `CORS_ALLOWED_ORIGINS=https://ssekanasystems.vercel.app`, and `CSRF_TRUSTED_ORIGINS=https://ssekanasystems.vercel.app`. `ALLOWED_HOSTS` may be set to the Render service hostname without `https://`; the default also allows Render hostnames. Keep the service's root directory as `server`, build command as `pip install -r requirements.txt && python manage.py collectstatic --noinput`, and start command as `python manage.py migrate --noinput && gunicorn config.wsgi:application --bind 0.0.0.0:$PORT`. Save the environment changes and deploy. Migrations create the Django tables in the new database; this does not copy records from the local SQLite database.
+3. In Vercel, open the frontend project's **Settings → Environment Variables** and set `VITE_API_BASE_URL` to `https://ssekanasystems.onrender.com/api` (replace the hostname if the Render service URL differs). Apply it to Production and any Preview environments you use, then redeploy so Vite embeds the value in the frontend build.
+4. Verify the API at `https://ssekanasystems.onrender.com/api/access/csrf/` returns successfully, then load the Vercel app and test sign-in and a database-backed page. In browser developer tools, API requests should target the Render hostname; in Render logs, check for migration/database connection errors. If the API host is changed, update the Vercel variable and redeploy. If the Vercel domain is changed, update both Render origin variables and redeploy.
+
+For an existing Supabase project, the database credentials are available from its **Connect** dialog. Never share the connection string or database password in chat or source control. To bring existing SQLite records over, perform a separate data export/import after the connection is verified.
 
 The root `npm start` command also forwards to the client Vite server. Start the Django API separately using the server steps above.
 

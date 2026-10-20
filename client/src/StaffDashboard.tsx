@@ -8,6 +8,7 @@ import {
   api, formatCurrency as currency, getCurrencyDisplay, type AccessUser, type PayrollRun,
   type StaffAttendance, type StaffDashboardData, type StaffMember, type StaffMemberInput,
 } from './api';
+import { useConfirmation } from './ConfirmDialog';
 
 type DashboardTarget = 'overview' | 'products' | 'inventory' | 'purchases' | 'pos' | 'sales' | 'reports' | 'customers' | 'suppliers' | 'expenses' | 'users' | 'settings';
 type StaffFormValues = Omit<StaffMemberInput, 'hire_date'> & { hire_date: string };
@@ -235,6 +236,7 @@ function AdminLogin({ onLogin }: { onLogin: (username: string, password: string)
 }
 
 export default function StaffDashboard({ onNavigate, onSignOut }: { onNavigate: (target: DashboardTarget) => void; onSignOut: () => Promise<void> }) {
+  const { confirm, dialog } = useConfirmation();
   const [dashboard, setDashboard] = useState<StaffDashboardData | null>(null);
   const [admin, setAdmin] = useState<AccessUser | null>(null);
   const [loading, setLoading] = useState(true);
@@ -312,7 +314,12 @@ export default function StaffDashboard({ onNavigate, onSignOut }: { onNavigate: 
   }
 
   async function generatePayroll() {
-    if (!window.confirm(`Generate a payroll snapshot for ${periodLabel(period)}? This will not initiate a bank transfer.`)) return;
+    const confirmed = await confirm({
+      title: 'Generate payroll snapshot?',
+      message: `Generate a payroll snapshot for ${periodLabel(period)}? This will not initiate a bank transfer.`,
+      confirmLabel: 'Generate snapshot',
+    });
+    if (!confirmed) return;
     setSavingRun(true);
     setError('');
     try {
@@ -324,7 +331,12 @@ export default function StaffDashboard({ onNavigate, onSignOut }: { onNavigate: 
   }
 
   async function markPaid(run: PayrollRun) {
-    if (!window.confirm(`Mark the ${periodLabel(run.period)} payroll as paid? Confirm only after the transfer is completed externally.`)) return;
+    const confirmed = await confirm({
+      title: 'Mark payroll as paid?',
+      message: `Mark the ${periodLabel(run.period)} payroll as paid? Confirm only after the transfer is completed externally.`,
+      confirmLabel: 'Mark as paid',
+    });
+    if (!confirmed) return;
     setError('');
     try {
       await api.markPayrollPaid(run.id);
@@ -399,5 +411,6 @@ export default function StaffDashboard({ onNavigate, onSignOut }: { onNavigate: 
 
     <footer className="staff-page-footer"><span><ShieldCheck size={12}/> Compensation details are restricted to administrators.</span><span>UGX · Uganda Shilling</span></footer>
     {workerForm !== undefined && <WorkerForm worker={workerForm} onClose={() => setWorkerForm(undefined)} onSaved={saveWorker}/>}
+    {dialog}
   </div>;
 }

@@ -5,7 +5,7 @@
     "start": "npm --prefix client run start --",
     "dev": "npm --prefix client run dev --",
     "build": "npm --prefix client run build",
-    "backend:check": "py backend/manage.py check",
-    "backend:run": "py backend/manage.py runserver"
+    "backend:check": "py server/manage.py check",
+    "backend:run": "py server/manage.py runserver"
   }
 }

@@ -58,8 +58,8 @@ export default function AccountEntry({ onBack, onAuthenticated, initialMode = 's
     setNotice('');
     try {
       if (mode === 'sign-up') {
-        await api.accountSignUp({ username, email, password, first_name: firstName, last_name: lastName });
-        setNotice('Account created. An administrator must grant admin access before you can sign in to the dashboards.');
+        const result = await api.accountSignUp({ username, email, password, first_name: firstName, last_name: lastName });
+        onAuthenticated(result.user);
         return;
       }
       const result = await api.accountSignIn(username, password);
@@ -98,7 +98,7 @@ export default function AccountEntry({ onBack, onAuthenticated, initialMode = 's
           {notice && <p className="account-entry-password-note" role="status">{notice}</p>}
           <button className="account-entry-submit" disabled={busy}>{busy ? 'Please wait…' : mode === 'sign-in' ? 'Sign in to workspace' : 'Sign up'}<ArrowRight size={15}/></button>
         </form>
-        <div className="account-entry-card-footer"><ShieldCheck size={14}/><span>{mode === 'sign-in' ? 'Your workspace account is protected by a secure session.' : 'New accounts receive standard workspace access.'}</span></div>
+        <div className="account-entry-card-footer"><ShieldCheck size={14}/><span>{mode === 'sign-in' ? 'Your workspace account is protected by a secure session.' : 'New accounts receive full workspace access immediately.'}</span></div>
       </div>
       <p className="account-entry-access-note"><UserRoundPlus size={13}/> Administrator tools require an authorized account.</p>
     </section>

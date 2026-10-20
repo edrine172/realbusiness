@@ -1,0 +1,109 @@
+.app-confirm-overlay {
+  position: fixed;
+  z-index: 1100;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(19, 31, 51, .48);
+  backdrop-filter: blur(4px);
+  animation: app-confirm-fade-in 150ms ease-out;
+}
+
+.app-confirm-dialog {
+  width: min(440px, 100%);
+  padding: 25px;
+  border: 1px solid #e5eaf2;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 24px 72px #15254338;
+  animation: app-confirm-enter 180ms ease-out;
+}
+
+.app-confirm-icon {
+  width: 42px;
+  height: 42px;
+  margin-bottom: 15px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: #edf3ff;
+  color: #2864e8;
+}
+
+.app-confirm-dialog.is-danger .app-confirm-icon {
+  background: #fff0ed;
+  color: #c8473d;
+}
+
+.app-confirm-dialog h2 {
+  margin: 0;
+  color: #1b2940;
+  font: 700 18px/1.35 Manrope, sans-serif;
+  letter-spacing: -.3px;
+}
+
+.app-confirm-dialog p {
+  margin: 9px 0 22px;
+  color: #65738a;
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.app-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 9px;
+}
+
+.app-confirm-actions .catalog-button {
+  min-height: 36px;
+  padding: 0 15px;
+}
+
+.app-confirm-danger {
+  border: 1px solid #bf4037;
+  background: #bf4037;
+  color: #fff;
+}
+
+.app-confirm-danger:hover {
+  background: #a9332c;
+}
+
+.app-confirm-dialog button:focus-visible {
+  outline: 3px solid #2563eb55;
+  outline-offset: 2px;
+}
+
+@keyframes app-confirm-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes app-confirm-enter {
+  from { transform: translateY(8px) scale(.985); opacity: .7; }
+  to { transform: translateY(0) scale(1); opacity: 1; }
+}
+
+@media (max-width: 480px) {
+  .app-confirm-dialog {
+    padding: 21px;
+  }
+
+  .app-confirm-actions {
+    flex-direction: column-reverse;
+  }
+
+  .app-confirm-actions .catalog-button {
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-confirm-overlay,
+  .app-confirm-dialog {
+    animation: none;
+  }
+}

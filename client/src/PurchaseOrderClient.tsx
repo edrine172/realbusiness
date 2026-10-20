@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
-import { AlertCircle, Check, ClipboardList, Package, Plus, RefreshCw, Search, Truck } from 'lucide-react';
+import { AlertCircle, Check, ClipboardList, Package, Plus, RefreshCw, Search, Trash2, Truck } from 'lucide-react';
 import {
   api,
   formatCurrency,
@@ -10,6 +10,7 @@ import {
   type Customer,
   type Product,
 } from './api';
+import { useConfirmation } from './ConfirmDialog';
 
 type DashboardTab = 'bottle-orders' | 'material-orders' | 'bottle-catalog' | 'material-catalog';
 type OrderFilter = 'all' | 'open' | 'partial' | 'completed';
@@ -23,6 +24,7 @@ const dateLabel = (value: string | null) => value
   : 'Not scheduled';
 
 export default function PurchaseOrderClient() {
+  const { confirm, dialog } = useConfirmation();
   const [tab, setTab] = useState<DashboardTab>('bottle-orders');
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [inventoryProducts, setInventoryProducts] = useState<Product[]>([]);
@@ -287,6 +289,57 @@ export default function PurchaseOrderClient() {
     }
   }
 
+  async function deleteBottleOrder(order: BottleCustomerPO) {
+    const deliveredQuantity = order.items.reduce((total, item) => total + item.delivered_quantity, 0);
+    const confirmed = await confirm({
+      title: 'Delete client delivery PO?',
+      message: `Delete ${order.reference}? This will return ${deliveredQuantity.toLocaleString()} delivered items to inventory and remove its delivery history.`,
+      confirmLabel: 'Delete PO and return stock',
+      variant: 'danger',
+    });
+    if (!confirmed) return;
+
+    setBusyId(order.id);
+    setError('');
+    setNotice('');
+    try {
+      await api.deleteBottleOrder(order.id);
+      await loadData();
+      if (selectedBottleOrderId === order.id) setSelectedBottleOrderId(null);
+      if (historyBottleOrderId === order.id) setHistoryBottleOrderId(null);
+      setNotice(`${order.reference} deleted. ${deliveredQuantity.toLocaleString()} delivered items returned to inventory.`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not delete this bottle PO.');
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function deleteMaterialOrder(order: ClientMaterialPO) {
+    const confirmed = await confirm({
+      title: 'Delete client-supplied PO?',
+      message: `Delete ${order.reference}? This will remove ${formatQuantity(Number(order.received_quantity))} ${order.material_unit} received against this PO from ${order.material_name} stock. The deletion will be blocked if any of that stock has already been used.`,
+      confirmLabel: 'Delete PO and reverse stock',
+      variant: 'danger',
+    });
+    if (!confirmed) return;
+
+    setBusyId(order.id);
+    setError('');
+    setNotice('');
+    try {
+      await api.deleteClientMaterialOrder(order.id);
+      await loadData();
+      if (selectedMaterialOrderId === order.id) setSelectedMaterialOrderId(null);
+      if (historyMaterialOrderId === order.id) setHistoryMaterialOrderId(null);
+      setNotice(`${order.reference} deleted. Received stock was removed from ${order.material_name}.`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not delete this client-supplied PO.');
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   const tabs: Array<{ id: DashboardTab; label: string }> = [
     { id: 'bottle-orders', label: 'Client Delivery POs' },
     { id: 'material-orders', label: 'Client-Supplied POs' },
@@ -402,10 +455,10 @@ export default function PurchaseOrderClient() {
       {(tab === 'bottle-orders' || tab === 'material-orders') && <section className="po-register">
         <header><div><span className="po-eyebrow">LIVE PROCUREMENT REGISTER</span><h2>{tab === 'bottle-orders' ? 'Client Delivery POs' : 'Client-Supplied Product POs'}</h2><p>{tab === 'bottle-orders' ? 'Track quantities delivered against each client PO.' : 'Each product PO has independent quantity, rate, and receipts.'}</p></div><span className="po-order-count">{tab === 'bottle-orders' ? bottleOrders.length : materialOrders.length} POs</span></header>
         <div className="po-register-controls"><label><Search size={14}/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search PO, customer, product"/></label><select aria-label="Filter PO status" value={filter} onChange={(event) => setFilter(event.target.value as OrderFilter)}><option value="all">All statuses</option><option value="open">Open</option><option value="partial">Partially fulfilled</option><option value="completed">Completed</option></select></div>
-        <div className="po-register-scroll"><table><thead>{tab === 'bottle-orders' ? <tr><th>CLIENT PO</th><th>CUSTOMER</th><th>PRODUCT CATEGORIES</th><th>ORDERED / DELIVERED</th><th>PO AMOUNT</th><th>EXPECTED</th><th>STATUS</th><th>DELIVERIES</th></tr> : <tr><th>CLIENT PO</th><th>CUSTOMER</th><th>SUPPLIED PRODUCT</th><th>ORDERED / RECEIVED</th><th>UNIT RATE</th><th>PO AMOUNT</th><th>STATUS</th><th>RECEIPTS</th></tr>}</thead><tbody>
+        <div className="po-register-scroll"><table><thead>{tab === 'bottle-orders' ? <tr><th>CLIENT PO</th><th>CUSTOMER</th><th>PRODUCT CATEGORIES</th><th>ORDERED / DELIVERED</th><th>PO AMOUNT</th><th>EXPECTED</th><th>STATUS</th><th>DELIVERIES</th><th>ACTIONS</th></tr> : <tr><th>CLIENT PO</th><th>CUSTOMER</th><th>SUPPLIED PRODUCT</th><th>ORDERED / RECEIVED</th><th>UNIT RATE</th><th>PO AMOUNT</th><th>STATUS</th><th>RECEIPTS</th><th>ACTIONS</th></tr>}</thead><tbody>
           {tab === 'bottle-orders' ? filteredBottleOrders.map((order) => <Fragment key={order.id}>
-            <tr><td><b>{order.reference}</b><small>Created {dateLabel(order.ordered_at)}</small></td><td>{order.customer_name}</td><td>{[...new Set(order.items.map((item) => item.category))].join(', ')}</td><td>{order.items.map((item) => <small key={item.id}>{item.category}: {item.delivered_quantity} / {item.quantity} {item.unit}</small>)}</td><td><b>{formatCurrency(order.total)}</b></td><td>{dateLabel(order.expected_delivery)}</td><td><span className={`po-status ${order.status}`}>{order.status}</span></td><td><button className="po-row-action" type="button" aria-expanded={historyBottleOrderId === order.id} onClick={() => setHistoryBottleOrderId((current) => current === order.id ? null : order.id)}>{historyBottleOrderId === order.id ? 'Hide history' : `View history (${order.deliveries.length})`}</button></td></tr>
-            {historyBottleOrderId === order.id && <tr className="po-order-history-row"><td colSpan={8}><div className="po-order-history">
+            <tr><td><b>{order.reference}</b><small>Created {dateLabel(order.ordered_at)}</small></td><td>{order.customer_name}</td><td>{[...new Set(order.items.map((item) => item.category))].join(', ')}</td><td>{order.items.map((item) => <small key={item.id}>{item.category}: {item.delivered_quantity} / {item.quantity} {item.unit}</small>)}</td><td><b>{formatCurrency(order.total)}</b></td><td>{dateLabel(order.expected_delivery)}</td><td><span className={`po-status ${order.status}`}>{order.status}</span></td><td><button className="po-row-action" type="button" aria-expanded={historyBottleOrderId === order.id} onClick={() => setHistoryBottleOrderId((current) => current === order.id ? null : order.id)}>{historyBottleOrderId === order.id ? 'Hide history' : `View history (${order.deliveries.length})`}</button></td><td><button className="po-delete-button" type="button" disabled={busyId === order.id} onClick={() => void deleteBottleOrder(order)}><Trash2 size={13}/>{busyId === order.id ? 'Deleting…' : 'Delete'}</button></td></tr>
+            {historyBottleOrderId === order.id && <tr className="po-order-history-row"><td colSpan={9}><div className="po-order-history">
               <header><div><strong>Delivery history · {order.reference}</strong><small>{order.customer_name} · {order.status} · {order.deliveries.length} deliveries</small></div></header>
               {order.deliveries.length ? <div className="po-order-history-list">{order.deliveries.map((delivery) => <article key={delivery.id}>
                 <div><b>{delivery.reference}</b><small>{dateLabel(delivery.delivered_at)}</small></div>
@@ -415,8 +468,8 @@ export default function PurchaseOrderClient() {
             </div></td></tr>}
           </Fragment>)
             : filteredMaterialOrders.map((order) => <Fragment key={order.id}>
-              <tr><td><b>{order.reference}</b><small>Created {dateLabel(order.ordered_at)}</small></td><td>{order.customer_name}</td><td>{order.material_name}</td><td>{order.received_quantity} / {order.quantity} {order.material_unit}</td><td>{formatCurrency(order.unit_price)} / {order.material_unit}</td><td><b>{formatCurrency(order.total)}</b></td><td><span className={`po-status ${order.status}`}>{order.status}</span></td><td><button className="po-row-action" type="button" aria-expanded={historyMaterialOrderId === order.id} onClick={() => setHistoryMaterialOrderId((current) => current === order.id ? null : order.id)}>{historyMaterialOrderId === order.id ? 'Hide history' : `View history (${order.receipts.length})`}</button></td></tr>
-              {historyMaterialOrderId === order.id && <tr className="po-order-history-row"><td colSpan={8}><div className="po-order-history">
+              <tr><td><b>{order.reference}</b><small>Created {dateLabel(order.ordered_at)}</small></td><td>{order.customer_name}</td><td>{order.material_name}</td><td>{order.received_quantity} / {order.quantity} {order.material_unit}</td><td>{formatCurrency(order.unit_price)} / {order.material_unit}</td><td><b>{formatCurrency(order.total)}</b></td><td><span className={`po-status ${order.status}`}>{order.status}</span></td><td><button className="po-row-action" type="button" aria-expanded={historyMaterialOrderId === order.id} onClick={() => setHistoryMaterialOrderId((current) => current === order.id ? null : order.id)}>{historyMaterialOrderId === order.id ? 'Hide history' : `View history (${order.receipts.length})`}</button></td><td><button className="po-delete-button" type="button" disabled={busyId === order.id} onClick={() => void deleteMaterialOrder(order)}><Trash2 size={13}/>{busyId === order.id ? 'Deleting…' : 'Delete'}</button></td></tr>
+              {historyMaterialOrderId === order.id && <tr className="po-order-history-row"><td colSpan={9}><div className="po-order-history">
                 <header><div><strong>Receipt history · {order.reference}</strong><small>{order.customer_name} · {order.material_name} · {order.status} · {order.receipts.length} receipts</small></div></header>
                 {order.receipts.length ? <div className="po-order-history-list">{order.receipts.map((receipt) => <article key={receipt.id}>
                   <div><b>{receipt.reference}</b><small>{dateLabel(receipt.received_at)}</small></div>
@@ -430,6 +483,7 @@ export default function PurchaseOrderClient() {
         </tbody></table></div>
       </section>}
     </>}
+    {dialog}
   </div>;
 }
 
