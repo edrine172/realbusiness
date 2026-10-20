@@ -843,7 +843,7 @@ export const api = {
     payment_method: Sale['payment_method'];
     discount_percent: string;
     cash_tendered?: string;
-    items: Array<{ product: number; quantity: number }>;
+    items: Array<{ product: number; quantity: number; unit_price?: string }>;
   }) => request<Sale>('/sales/checkout/', { method: 'POST', body: JSON.stringify(sale) }),
   reportsSummary: (range: '1d' | '7d' | '30d' | '90d' | '180d' | '365d' | '730d' | '1825d' | '3650d' | '18250d' | '36500d' | '73000d' = '30d', month?: string, date?: string) => {
     const params = new URLSearchParams(date ? { date } : month ? { month } : { range });

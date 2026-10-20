@@ -3,7 +3,7 @@ import { Banknote, Barcode, BriefcaseBusiness, Check, CreditCard, Minus, Package
 import { api, formatCurrency as currency, type Customer, type Product, type Sale, type SalesSummary } from './api';
 
 type PaymentMethod = Sale['payment_method'];
-type CartLine = { product: Product; quantity: number };
+type CartLine = { product: Product; quantity: number; unitPrice: string };
 type HeldCart = { id: number; customer: string; customerId: number | null; lines: CartLine[]; discountPercent: number; savedAt: number };
 const TAX_RATE = 0;
 const paymentMethods: Array<{ value: PaymentMethod; label: string; icon: typeof Banknote }> = [
@@ -76,7 +76,7 @@ export default function PosDashboard({ initialCustomerId, onOpenProducts, onOpen
     const term = search.trim().toLowerCase();
     return products.filter((product) => product.is_active && product.quantity > 0 && (activeCategory === 'All items' || product.category_name === activeCategory) && (!term || `${product.name} ${product.sku} ${product.category_name}`.toLowerCase().includes(term)));
   }, [products, activeCategory, search]);
-  const subtotal = cart.reduce((sum, line) => sum + Number(line.product.unit_price) * line.quantity, 0);
+  const subtotal = cart.reduce((sum, line) => sum + (Number(line.unitPrice || line.product.unit_price) || 0) * line.quantity, 0);
   const discountAmount = Math.round(subtotal * discountPercent) / 100;
   const selectedCustomer = customers.find((item) => item.id === customerId);
   const taxAmount = Math.round((subtotal - discountAmount) * TAX_RATE) / 100;
@@ -88,6 +88,10 @@ export default function PosDashboard({ initialCustomerId, onOpenProducts, onOpen
   const changeDue = paymentMethod === 'cash' ? Math.max(0, Math.round((cashReceived - total) * 100) / 100) : 0;
   const partialPaymentAllowed = cashRemaining === 0 || Boolean(selectedCustomer?.is_active && Number(selectedCustomer.credit_limit) > 0 && availableCredit >= cashRemaining);
   const cartUnits = cart.reduce((sum, line) => sum + line.quantity, 0);
+  const invalidUnitPrice = cart.some((line) => {
+    const price = Number(line.unitPrice);
+    return !line.unitPrice.trim() || !Number.isFinite(price) || price < 0 || Math.abs(price * 100 - Math.round(price * 100)) > 1e-7;
+  });
 
   function addProduct(product: Product) {
     if (product.quantity < 1) return;
@@ -95,8 +99,12 @@ export default function PosDashboard({ initialCustomerId, onOpenProducts, onOpen
     setCart((current) => {
       const existing = current.find((line) => line.product.id === product.id);
       if (existing) return current.map((line) => line.product.id === product.id ? { ...line, quantity: Math.min(line.quantity + 1, product.quantity) } : line);
-      return [...current, { product, quantity: 1 }];
+      return [...current, { product, quantity: 1, unitPrice: product.unit_price }];
     });
+  }
+
+  function changeUnitPrice(productId: number, unitPrice: string) {
+    setCart((current) => current.map((line) => line.product.id === productId ? { ...line, unitPrice } : line));
   }
 
   function changeQuantity(productId: number, delta: number) {
@@ -138,7 +146,7 @@ export default function PosDashboard({ initialCustomerId, onOpenProducts, onOpen
   }
 
   function resumeCart(held: HeldCart) {
-    setCart(held.lines);
+    setCart(held.lines.map((line) => ({ ...line, unitPrice: line.unitPrice ?? line.product.unit_price })));
     setCustomer(held.customer);
     setCustomerId(held.customerId ?? null);
     setDiscountPercent(held.discountPercent);
@@ -156,7 +164,11 @@ export default function PosDashboard({ initialCustomerId, onOpenProducts, onOpen
         payment_method: paymentMethod,
         discount_percent: discountPercent.toFixed(2),
         ...(paymentMethod === 'cash' ? { cash_tendered: cashReceived.toFixed(2) } : {}),
-        items: cart.map((line) => ({ product: line.product.id, quantity: line.quantity })),
+        items: cart.map((line) => ({
+          product: line.product.id,
+          quantity: line.quantity,
+          unit_price: Number(line.unitPrice).toFixed(2),
+        })),
       });
       setReceipt(sale);
       setCart([]);
@@ -194,7 +206,7 @@ export default function PosDashboard({ initialCustomerId, onOpenProducts, onOpen
         <label className="pos-customer-field"><Users size={14}/><select aria-label="Customer account" value={customerId ?? ''} onChange={(event) => { const id = event.target.value ? Number(event.target.value) : null; const selected = customers.find((item) => item.id === id); setCustomerId(id); setCustomer(selected?.name ?? 'Walk-in Customer'); if (paymentMethod === 'account' && !selected) setPaymentMethod('cash'); }}><option value="">Walk-in Customer</option>{customers.filter((item) => item.is_active).map((item) => <option key={item.id} value={item.id}>{item.name} · {item.customer_code}</option>)}</select></label>
         <div className="pos-cart-lines">{cart.map((line) => <div className="pos-cart-line" key={line.product.id}>
           <div className="pos-cart-line-title"><strong>{line.product.name}</strong><small>{line.product.sku}</small><button aria-label={`Remove ${line.product.name}`} onClick={() => setCart((current) => current.filter((item) => item.product.id !== line.product.id))}><X size={13}/></button></div>
-          <div className="pos-cart-line-bottom"><div className="pos-quantity-control"><button aria-label={`Decrease ${line.product.name}`} onClick={() => changeQuantity(line.product.id, -1)}><Minus size={12}/></button><input aria-label={`Quantity for ${line.product.name}`} type="number" min="1" max={line.product.quantity} step="1" value={quantityDrafts[line.product.id] ?? String(line.quantity)} onChange={(event) => setQuantityDrafts((current) => ({ ...current, [line.product.id]: event.target.value }))} onBlur={(event) => commitQuantity(line.product.id, event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); }}/><button aria-label={`Increase ${line.product.name}`} onClick={() => changeQuantity(line.product.id, 1)} disabled={line.quantity >= line.product.quantity}><Plus size={12}/></button></div><strong>{currency(Number(line.product.unit_price) * line.quantity)}</strong></div>
+          <div className="pos-cart-line-bottom"><div className="pos-quantity-control"><button aria-label={`Decrease ${line.product.name}`} onClick={() => changeQuantity(line.product.id, -1)}><Minus size={12}/></button><input aria-label={`Quantity for ${line.product.name}`} type="number" min="1" max={line.product.quantity} step="1" value={quantityDrafts[line.product.id] ?? String(line.quantity)} onChange={(event) => setQuantityDrafts((current) => ({ ...current, [line.product.id]: event.target.value }))} onBlur={(event) => commitQuantity(line.product.id, event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); }}/><button aria-label={`Increase ${line.product.name}`} onClick={() => changeQuantity(line.product.id, 1)} disabled={line.quantity >= line.product.quantity}><Plus size={12}/></button></div><label className="pos-unit-price">Unit price<input aria-label={`Unit price for ${line.product.name}`} type="number" min="0" step="0.01" value={line.unitPrice} onChange={(event) => changeUnitPrice(line.product.id, event.target.value)}/></label><strong>{currency((Number(line.unitPrice) || 0) * line.quantity)}</strong></div>
         </div>)}{!cart.length && <div className="pos-empty-cart"><Package size={21}/><strong>Your cart is empty</strong><span>Add products to start a sale.</span></div>}</div>
         <label className="pos-discount"><span><Tag size={13}/>Discount</span><span className="pos-percent-input"><input aria-label="Discount percent" type="number" min="0" max="100" step="1" value={discountPercent} onChange={(event) => setDiscountPercent(Math.max(0, Math.min(100, Number(event.target.value))))}/>%</span></label>
         <div className="pos-totals"><div><span>Subtotal · {cartUnits} items</span><strong>{currency(subtotal)}</strong></div><div><span>Discount</span><strong className="pos-discount-value">−{currency(discountAmount)}</strong></div><div><span>Tax after discount ({TAX_RATE}%)</span><strong>{currency(taxAmount)}</strong></div><div className="pos-grand-total"><span>Total</span><strong>{currency(total)}</strong></div></div>
@@ -202,8 +214,9 @@ export default function PosDashboard({ initialCustomerId, onOpenProducts, onOpen
           {paymentMethod === 'cash' && <div className="pos-cash-entry"><label>Amount received<input type="number" min="0.01" step="0.01" value={cashTendered} onChange={(event) => setCashTendered(event.target.value)} placeholder={total.toFixed(2)}/></label>{cashRemaining > 0 ? <><div className="pos-change-due pos-remaining-due"><span>Remaining amount</span><strong>{currency(cashRemaining)}</strong></div>{!selectedCustomer ? <small className="pos-error">Select a customer to place the remaining amount on their account.</small> : !partialPaymentAllowed && <small className="pos-error">The remaining amount exceeds this customer’s available credit.</small>}</> : <div className="pos-change-due"><span>Change due</span><strong>{currency(changeDue)}</strong></div>}<div className="pos-cash-shortcuts">{[total, 20, 50].filter((amount, index, list) => amount > 0 && list.indexOf(amount) === index).map((amount) => <button key={amount} onClick={() => setCashTendered(amount.toFixed(2))}>{amount === total ? 'Exact' : currency(amount)}</button>)}</div></div>}
           {paymentMethod === 'account' && <div className="pos-cash-entry pos-account-summary"><div><span>Customer</span><strong>{selectedCustomer?.name ?? 'Select a customer'}</strong></div><div><span>Available credit</span><strong>{currency(availableCredit)}</strong></div>{!accountPaymentAllowed && <small className="pos-error">Select an account with enough approved credit.</small>}</div>}
         </div>
+        {invalidUnitPrice && <p className="pos-error">Enter a unit price using no more than two decimal places for each item.</p>}
         {error && <p className="pos-error">{error}</p>}
-        <button className="pos-checkout-button" disabled={!cart.length || saving || (paymentMethod === 'cash' && (cashReceived <= 0 || !partialPaymentAllowed)) || (paymentMethod === 'account' && !accountPaymentAllowed)} onClick={() => void completeSale()}>{saving ? 'Processing payment…' : <><CreditCard size={16}/>{paymentMethod === 'account' ? 'Charge account' : 'Complete sale'}</>}</button>
+        <button className="pos-checkout-button" disabled={!cart.length || invalidUnitPrice || saving || (paymentMethod === 'cash' && (cashReceived <= 0 || !partialPaymentAllowed)) || (paymentMethod === 'account' && !accountPaymentAllowed)} onClick={() => void completeSale()}>{saving ? 'Processing payment…' : <><CreditCard size={16}/>{paymentMethod === 'account' ? 'Charge account' : 'Complete sale'}</>}</button>
         <button className="pos-hold-button" disabled={!cart.length} onClick={holdCart}>Hold cart {heldCarts.length ? `(${heldCarts.length})` : ''}</button>
         {heldCarts.length > 0 && <div className="pos-held-carts"><span>HELD CARTS</span>{heldCarts.slice(0, 2).map((held) => <button key={held.id} onClick={() => resumeCart(held)}>{held.customer} · {held.lines.length} products</button>)}</div>}
       </aside>

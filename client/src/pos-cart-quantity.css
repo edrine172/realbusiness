@@ -17,3 +17,6 @@
   -webkit-appearance:none;
 }
 .pos-quantity-control input:focus{box-shadow:inset 0 0 0 1px #9bb8f4;border-radius:3px}
+.pos-unit-price{display:grid;gap:2px;color:#7a879a;font-size:7px}
+.pos-unit-price input{width:66px;height:23px;padding:0 4px;border:1px solid #e4e9f1;border-radius:4px;background:#fff;color:#29374d;text-align:right;font-size:8px}
+.pos-unit-price input:focus{border-color:#9bb8f4;outline:0;box-shadow:0 0 0 1px #9bb8f4}

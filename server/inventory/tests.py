@@ -940,6 +940,32 @@ class PointOfSaleTests(AdminAPITestCase):
         self.assertEqual(movement.movement_type, StockMovement.MovementType.OUTBOUND)
         self.assertEqual(movement.reference, response.data['receipt_number'])
 
+    def test_checkout_accepts_a_customer_specific_unit_price(self):
+        response = self.checkout(
+            customer=self.customer.id,
+            items=[{'product': self.product.id, 'quantity': 2, 'unit_price': '12.50'}],
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data['subtotal'], '25.00')
+        self.assertEqual(response.data['discount_amount'], '2.50')
+        self.assertEqual(response.data['total'], '22.50')
+        self.assertEqual(response.data['items'][0]['unit_price'], '12.50')
+        self.assertEqual(response.data['items'][0]['line_total'], '25.00')
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.unit_price, Decimal('10.00'))
+
+    def test_checkout_rejects_invalid_unit_price_without_changing_stock(self):
+        response = self.checkout(items=[{
+            'product': self.product.id,
+            'quantity': 2,
+            'unit_price': '-1.00',
+        }])
+
+        self.assertEqual(response.status_code, 400)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.quantity, 4)
+        self.assertFalse(Sale.objects.exists())
+
     def test_overselling_rejects_checkout_without_partial_writes(self):
         response = self.checkout(items=[{'product': self.product.id, 'quantity': 5}])
 

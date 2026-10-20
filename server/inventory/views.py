@@ -1131,6 +1131,11 @@ def checkout(request):
         if product.quantity < item['quantity']:
             raise ValidationError({'items': f'Only {product.quantity} units of {product.sku} are in stock.'})
 
+    unit_prices = {
+        item['product'].id: item.get('unit_price', products[item['product'].id].unit_price)
+        for item in cart_items
+    }
+
     customer = data.get('customer')
     if customer is not None:
         customer = Customer.objects.select_for_update().get(pk=customer.pk)
@@ -1140,7 +1145,7 @@ def checkout(request):
     cent = Decimal('0.01')
     tax_rate = Decimal('0')
     subtotal = sum(
-        (products[item['product'].id].unit_price * item['quantity'] for item in cart_items),
+        (unit_prices[item['product'].id] * item['quantity'] for item in cart_items),
         Decimal('0'),
     ).quantize(cent, rounding=ROUND_HALF_UP)
     discount_percent = data['discount_percent']
@@ -1199,7 +1204,7 @@ def checkout(request):
             product_name=product.name,
             product_sku=product.sku,
             quantity=quantity,
-            unit_price=product.unit_price,
+            unit_price=unit_prices[product.id],
             unit_cost=product.cost_price,
         ))
         product.quantity -= quantity

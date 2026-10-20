@@ -563,6 +563,12 @@ class SaleSerializer(serializers.ModelSerializer):
 class SaleCheckoutItemSerializer(serializers.Serializer):
     product = serializers.PrimaryKeyRelatedField(queryset=Product.objects.filter(is_active=True))
     quantity = serializers.IntegerField(min_value=1)
+    unit_price = serializers.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        min_value=Decimal('0'),
+        required=False,
+    )
 
 
 class SaleCheckoutSerializer(serializers.Serializer):
