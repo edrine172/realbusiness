@@ -2,9 +2,10 @@ import { requestMutationConfirmation } from './ConfirmDialog';
 
 const configuredApiBase = import.meta.env.VITE_API_BASE_URL?.trim();
 const normalizedApiBase = configuredApiBase?.replace(/\/+$/, '');
-const API_BASE = normalizedApiBase
+const configuredDevelopmentApiBase = normalizedApiBase
   ? (normalizedApiBase.endsWith('/api') ? normalizedApiBase : `${normalizedApiBase}/api`)
-  : (import.meta.env.DEV ? 'http://localhost:8000/api' : '');
+  : 'http://localhost:8000/api';
+const API_BASE = import.meta.env.DEV ? configuredDevelopmentApiBase : '/api';
 let accessCsrfToken = '';
 
 async function fetchWithNetworkRetries(url: string, options?: RequestInit) {
