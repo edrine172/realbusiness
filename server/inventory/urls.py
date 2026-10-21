@@ -1,7 +1,7 @@
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 from .access_control import AccessDashboardViewSet, AccessGroupViewSet, AccessPermissionViewSet, AccessUserViewSet, access_csrf, access_login, access_logout, access_session, account_login, account_logout, account_register, account_session
-from .views import BottleCustomerPOViewSet, BottleProductViewSet, CategoryViewSet, ClientMaterialPOViewSet, ClientMaterialViewSet, CustomerViewSet, ExpenseBudgetViewSet, ExpenseViewSet, NotificationViewSet, PayrollRunViewSet, ProductViewSet, PurchaseViewSet, SaleViewSet, StaffAttendanceViewSet, StaffMemberViewSet, StockMovementViewSet, SupplierViewSet, checkout, dashboard_summary, exchange_rates, expenses_bulk_upload, expenses_summary, inventory_adjustment, purchase_summary, reports_summary, sales_summary, staff_dashboard, system_settings
+from .views import BottleCustomerPOViewSet, BottleProductViewSet, CategoryViewSet, ClientMaterialPOViewSet, ClientMaterialViewSet, CustomerViewSet, ExpenseBudgetViewSet, ExpenseViewSet, NotificationViewSet, PayrollRunViewSet, ProductViewSet, PurchaseViewSet, SaleViewSet, StaffAttendanceViewSet, StaffMemberViewSet, StaffTaskAssignmentViewSet, StaffTaskEntryViewSet, StaffTaskViewSet, StockMovementViewSet, SupplierViewSet, checkout, dashboard_summary, exchange_rates, expenses_bulk_upload, expenses_summary, inventory_adjustment, purchase_summary, reports_summary, sales_summary, staff_dashboard, system_settings
 
 router = DefaultRouter()
 router.register('products', ProductViewSet)
@@ -13,6 +13,9 @@ router.register('expenses', ExpenseViewSet)
 router.register('expense-budgets', ExpenseBudgetViewSet)
 router.register('staff/workers', StaffMemberViewSet, basename='staff-worker')
 router.register('staff/attendance', StaffAttendanceViewSet, basename='staff-attendance')
+router.register('staff/tasks', StaffTaskViewSet, basename='staff-task')
+router.register('staff/task-assignments', StaffTaskAssignmentViewSet, basename='staff-task-assignment')
+router.register('staff/task-entries', StaffTaskEntryViewSet, basename='staff-task-entry')
 router.register('staff/payroll-runs', PayrollRunViewSet, basename='staff-payroll-run')
 router.register('access/users', AccessUserViewSet, basename='access-user')
 router.register('access/groups', AccessGroupViewSet, basename='access-group')

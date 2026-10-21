@@ -528,6 +528,76 @@ class StaffAttendance(models.Model):
         return f'{self.worker.employee_number} · {self.date}'
 
 
+class StaffTask(models.Model):
+    class PayBasis(models.TextChoices):
+        DAILY = 'daily', 'Daily'
+        HOURLY = 'hourly', 'Hourly'
+        MONTHLY = 'monthly', 'Monthly'
+
+    name = models.CharField(max_length=120, unique=True)
+    pay_basis = models.CharField(max_length=12, choices=PayBasis.choices)
+    pay_rate = models.DecimalField(max_digits=12, decimal_places=2)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+
+class StaffTaskAssignment(models.Model):
+    worker = models.ForeignKey(StaffMember, on_delete=models.PROTECT, related_name='permanent_task_assignments')
+    task = models.ForeignKey(StaffTask, on_delete=models.PROTECT, related_name='permanent_assignments')
+    assigned_from = models.DateField(default=timezone.localdate)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['worker__full_name', 'task__name']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['worker', 'task'],
+                condition=models.Q(is_active=True),
+                name='unique_active_staff_task_assignment',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.worker.employee_number} · {self.task.name}'
+
+
+class StaffTaskEntry(models.Model):
+    class AssignmentType(models.TextChoices):
+        DAILY = 'daily', 'Daily assignment'
+        PERMANENT = 'permanent', 'Permanent assignment'
+
+    worker = models.ForeignKey(StaffMember, on_delete=models.PROTECT, related_name='task_entries')
+    task = models.ForeignKey(StaffTask, on_delete=models.PROTECT, related_name='work_entries')
+    date = models.DateField()
+    assignment_type = models.CharField(max_length=12, choices=AssignmentType.choices, default=AssignmentType.DAILY)
+    task_name = models.CharField(max_length=120)
+    pay_basis = models.CharField(max_length=12, choices=StaffTask.PayBasis.choices)
+    pay_rate = models.DecimalField(max_digits=12, decimal_places=2)
+    hours = models.DecimalField(max_digits=7, decimal_places=2, default=0)
+    recorded_by = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='staff_task_entries')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['date', 'worker__full_name', 'task_name']
+        constraints = [
+            models.UniqueConstraint(fields=['worker', 'task', 'date'], name='unique_staff_task_per_worker_day'),
+        ]
+        indexes = [
+            models.Index(fields=['date', 'worker'], name='staff_task_date_worker_idx'),
+        ]
+
+    def __str__(self):
+        return f'{self.worker.employee_number} · {self.task_name} · {self.date}'
+
+
 class PayrollRun(models.Model):
     class Status(models.TextChoices):
         SCHEDULED = 'scheduled', 'Scheduled'
@@ -562,6 +632,7 @@ class PayrollLine(models.Model):
     pay_basis = models.CharField(max_length=12, choices=StaffMember.PayBasis.choices)
     hours = models.DecimalField(max_digits=7, decimal_places=2, default=0)
     days_worked = models.PositiveIntegerField(default=0)
+    task_pay = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     gross_pay = models.DecimalField(max_digits=12, decimal_places=2)
     withholding = models.DecimalField(max_digits=12, decimal_places=2)
     benefits = models.DecimalField(max_digits=12, decimal_places=2)

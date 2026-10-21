@@ -1,3 +1,5 @@
+import { requestMutationConfirmation } from './ConfirmDialog';
+
 const configuredApiBase = import.meta.env.VITE_API_BASE_URL?.trim();
 const normalizedApiBase = configuredApiBase?.replace(/\/+$/, '');
 const API_BASE = normalizedApiBase
@@ -587,6 +589,7 @@ export interface StaffMember {
   hours_per_period: string;
   period_days_worked: number;
   period_gross: string;
+  period_task_pay: string;
   withholding_percent: string;
   benefit_deduction: string;
   status: 'active' | 'leave' | 'inactive';
@@ -606,6 +609,7 @@ export interface PayrollLine {
   pay_basis: 'monthly' | 'hourly' | 'daily';
   hours: string;
   days_worked: number;
+  task_pay: string;
   gross_pay: string;
   withholding: string;
   benefits: string;
@@ -640,6 +644,47 @@ export interface StaffAttendance {
   updated_at: string;
 }
 
+export interface StaffTask {
+  id: number;
+  name: string;
+  pay_basis: 'daily' | 'hourly' | 'monthly';
+  pay_basis_display: string;
+  pay_rate: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StaffTaskEntry {
+  id: number;
+  worker: number;
+  worker_name: string;
+  employee_number: string;
+  task: number;
+  task_name: string;
+  date: string;
+  assignment_type: 'daily' | 'permanent';
+  pay_basis: StaffTask['pay_basis'];
+  pay_basis_display: string;
+  pay_rate: string;
+  hours: string;
+  created_at: string;
+}
+
+export interface StaffTaskAssignment {
+  id: number;
+  worker: number;
+  worker_name: string;
+  task: number;
+  task_name: string;
+  pay_basis: StaffTask['pay_basis'];
+  pay_basis_display: string;
+  pay_rate: string;
+  assigned_from: string;
+  is_active: boolean;
+  created_at: string;
+}
+
 export interface StaffDashboardData {
   summary: {
     current_period: string;
@@ -647,6 +692,7 @@ export interface StaffDashboardData {
     on_leave_workers: number;
     inactive_workers: number;
     gross_total: string;
+    task_pay_total: string;
     withholding_total: string;
     benefits_total: string;
     net_total: string;
@@ -659,7 +705,7 @@ export interface StaffDashboardData {
   payroll_runs: PayrollRun[];
 }
 
-export type StaffMemberInput = Omit<StaffMember, 'id' | 'employee_number' | 'pay_basis_display' | 'status_display' | 'period_days_worked' | 'period_gross' | 'created_at' | 'updated_at'>;
+export type StaffMemberInput = Omit<StaffMember, 'id' | 'employee_number' | 'pay_basis_display' | 'status_display' | 'period_days_worked' | 'period_gross' | 'period_task_pay' | 'created_at' | 'updated_at'>;
 
 async function ensureCsrfToken() {
   if (accessCsrfToken) return;
@@ -681,8 +727,54 @@ function formatApiErrorBody(body: unknown, status: number) {
   return flatten(body).join('; ') || `API request failed (${status})`;
 }
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
+async function request<T>(
+  path: string,
+  options?: RequestInit,
+  confirmationMode: 'required' | 'skip' = 'required',
+): Promise<T> {
   const method = options?.method?.toUpperCase() ?? 'GET';
+  const normalizedPath = path.split('?')[0];
+  const excludedPostConfirmations = [
+    '/access/login/',
+    '/access/logout/',
+    '/account/login/',
+    '/account/logout/',
+    '/access/permissions/',
+    '/staff/payroll-runs/generate/',
+  ];
+  const excludedPostConfirmationPatterns = [
+    /^\/access\/users\/\d+\/force_logout\/$/,
+    /^\/staff\/payroll-runs\/\d+\/mark_paid\/$/,
+    /^\/notifications\/(?:\d+\/(?:read|dismiss)|read_all)\/$/,
+  ];
+  const requiresConfirmation = method === 'DELETE'
+    || (method === 'POST'
+      && !excludedPostConfirmations.includes(normalizedPath)
+      && !excludedPostConfirmationPatterns.some((pattern) => pattern.test(normalizedPath)));
+  const manuallyConfirmedDeletes = [
+    /^\/categories\/\d+\/$/,
+    /^\/products\/\d+\/$/,
+    /^\/po-client\/bottle-orders\/\d+\/$/,
+    /^\/po-client\/material-orders\/\d+\/$/,
+  ];
+  const requestIsAlreadyConfirmed = method === 'DELETE'
+    && manuallyConfirmedDeletes.some((pattern) => pattern.test(normalizedPath));
+
+  if (confirmationMode === 'required' && requiresConfirmation && !requestIsAlreadyConfirmed) {
+    const resource = mutationResourceName(normalizedPath);
+    const deleting = method === 'DELETE';
+    const actionName = mutationActionName(normalizedPath);
+    const confirmed = await requestMutationConfirmation({
+      title: deleting ? `Delete ${resource}?` : `${actionName === 'save' ? 'Save' : 'Add'} ${resource}?`,
+      message: deleting
+        ? `This will permanently delete ${resource}. This action cannot be undone.`
+        : `This will ${actionName} ${resource}. Do you want to continue?`,
+      confirmLabel: deleting ? 'Delete' : actionName === 'save' ? 'Save' : 'Add',
+      variant: deleting ? 'danger' : 'default',
+    });
+    if (!confirmed) throw new Error('Action cancelled.');
+  }
+
   let headers = new Headers(options?.headers);
   if (!headers.has('Content-Type') && options?.body) headers.set('Content-Type', 'application/json');
 
@@ -732,6 +824,49 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
+}
+
+function mutationResourceName(path: string) {
+  const resources: Array<[RegExp, string]> = [
+    [/\/sales\/checkout\/$/, 'this sale'],
+    [/\/customers\/\d+\/payments\/$/, 'this customer payment'],
+    [/\/suppliers\/\d+\/payments\/$/, 'this supplier payment'],
+    [/\/purchases\/\d+\/payments\/$/, 'this purchase payment'],
+    [/\/staff\/attendance\/record_day\/$/, 'these attendance records'],
+    [/\/staff\/task-entries\/record_day\/$/, 'these task assignments and pay records'],
+    [/\/staff\/task-assignments\/$/, 'this standing task assignment'],
+    [/\/staff\/payroll-runs\/[^/]+\/mark_paid\/$/, 'this payroll payment status'],
+    [/\/staff\/payroll-runs\/generate\/$/, 'this payroll snapshot'],
+    [/\/staff\/workers\/$/, 'this worker'],
+    [/\/staff\/tasks\/$/, 'this task'],
+    [/\/access\/users\/\d+\/$/, 'this user account'],
+    [/\/access\/groups\/\d+\/$/, 'this access group'],
+    [/\/access\/users\/$/, 'this user account'],
+    [/\/access\/groups\/$/, 'this access group'],
+    [/\/products\/$/, 'this product'],
+    [/\/categories\/$/, 'this product category'],
+    [/\/customers\/$/, 'this customer'],
+    [/\/suppliers\/$/, 'this supplier'],
+    [/\/expenses\/bulk-upload\/$/, 'these expense records'],
+    [/\/expenses\/$/, 'this expense'],
+    [/\/expense-budgets\/$/, 'this expense budget'],
+    [/\/purchases\/$/, 'this purchase order'],
+    [/\/po-client\/bottle-products\/$/, 'this bottle product'],
+    [/\/po-client\/bottle-orders\/$/, 'this bottle order'],
+    [/\/po-client\/materials\/$/, 'this material'],
+    [/\/po-client\/material-orders\/$/, 'this material order'],
+    [/\/movements\/$/, 'this stock movement'],
+    [/\/inventory\/adjustments\/$/, 'this inventory adjustment'],
+    [/\/purchases\/\d+\/receive\/$/, 'this purchase receipt'],
+    [/\/po-client\/bottle-orders\/\d+\/deliver\/$/, 'this delivery'],
+    [/\/po-client\/material-orders\/\d+\/receive\/$/, 'this material receipt'],
+  ];
+  return resources.find(([pattern]) => pattern.test(path))?.[1] ?? 'this record';
+}
+
+function mutationActionName(path: string) {
+  if (/\/(record_day|checkout|payments|receive|deliver|adjustments|bulk-upload)\//.test(path)) return 'save';
+  return 'add';
 }
 
 async function accountAuthRequest(path: string, payload: Record<string, string>) {
@@ -802,8 +937,10 @@ export const api = {
     if (date) params.set('date', date);
     return request<StockMovement[]>(`/movements/${params.size ? `?${params}` : ''}`);
   },
-  createProduct: (product: Pick<Product, 'name' | 'sku' | 'quantity' | 'reorder_level' | 'unit_price' | 'cost_price' | 'location'> & { category: number; supplier?: number | null }) =>
-    request<Product>('/products/', { method: 'POST', body: JSON.stringify(product) }),
+  createProduct: (
+    product: Pick<Product, 'name' | 'sku' | 'quantity' | 'reorder_level' | 'unit_price' | 'cost_price' | 'location'> & { category: number; supplier?: number | null },
+    options?: { skipConfirmation?: boolean },
+  ) => request<Product>('/products/', { method: 'POST', body: JSON.stringify(product) }, options?.skipConfirmation ? 'skip' : 'required'),
   updateProduct: (id: number, product: Partial<Pick<Product, 'name' | 'sku' | 'category' | 'supplier' | 'quantity' | 'reorder_level' | 'is_active' | 'unit_price' | 'cost_price' | 'location'>>) =>
     request<Product>(`/products/${id}/`, { method: 'PATCH', body: JSON.stringify(product) }),
   deleteProduct: (id: number) => request<void>(`/products/${id}/`, { method: 'DELETE' }),
@@ -870,6 +1007,19 @@ export const api = {
   staffAttendance: (period: string) => request<StaffAttendance[]>(`/staff/attendance/?period=${encodeURIComponent(period)}`),
   recordStaffAttendance: (date: string, records: Array<{ worker: number; attended: boolean; output_quantity: number }>) =>
     request<StaffAttendance[]>('/staff/attendance/record_day/', { method: 'POST', body: JSON.stringify({ date, records }) }),
+  staffTasks: () => request<StaffTask[]>('/staff/tasks/'),
+  createStaffTask: (task: Pick<StaffTask, 'name' | 'pay_basis' | 'pay_rate'>) =>
+    request<StaffTask>('/staff/tasks/', { method: 'POST', body: JSON.stringify(task) }),
+  updateStaffTask: (id: number, task: Partial<Pick<StaffTask, 'name' | 'pay_basis' | 'pay_rate' | 'is_active'>>) =>
+    request<StaffTask>(`/staff/tasks/${id}/`, { method: 'PATCH', body: JSON.stringify(task) }),
+  staffTaskAssignments: () => request<StaffTaskAssignment[]>('/staff/task-assignments/?active=true'),
+  createStaffTaskAssignment: (assignment: Pick<StaffTaskAssignment, 'worker' | 'task' | 'assigned_from'>) =>
+    request<StaffTaskAssignment>('/staff/task-assignments/', { method: 'POST', body: JSON.stringify(assignment) }),
+  updateStaffTaskAssignment: (id: number, assignment: Partial<Pick<StaffTaskAssignment, 'is_active'>>) =>
+    request<StaffTaskAssignment>(`/staff/task-assignments/${id}/`, { method: 'PATCH', body: JSON.stringify(assignment) }),
+  staffTaskEntries: (period: string) => request<StaffTaskEntry[]>(`/staff/task-entries/?period=${encodeURIComponent(period)}`),
+  recordStaffTaskEntries: (date: string, records: Array<{ worker: number; task: number; hours: string }>) =>
+    request<StaffTaskEntry[]>('/staff/task-entries/record_day/', { method: 'POST', body: JSON.stringify({ date, records }) }),
   createStaffMember: (worker: StaffMemberInput) => request<StaffMember>('/staff/workers/', { method: 'POST', body: JSON.stringify(worker) }),
   updateStaffMember: (id: number, worker: Partial<StaffMemberInput>) => request<StaffMember>(`/staff/workers/${id}/`, { method: 'PATCH', body: JSON.stringify(worker) }),
   generatePayrollRun: (period: string) => request<PayrollRun>('/staff/payroll-runs/generate/', { method: 'POST', body: JSON.stringify({ period }) }),

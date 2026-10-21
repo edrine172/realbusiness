@@ -14,6 +14,21 @@ type PendingConfirmation = ConfirmationOptions & {
   resolve: (confirmed: boolean) => void;
 };
 
+type MutationConfirmationHandler = (options: ConfirmationOptions) => Promise<boolean>;
+
+let mutationConfirmationHandler: MutationConfirmationHandler | null = null;
+
+export function registerMutationConfirmationHandler(handler: MutationConfirmationHandler) {
+  mutationConfirmationHandler = handler;
+  return () => {
+    if (mutationConfirmationHandler === handler) mutationConfirmationHandler = null;
+  };
+}
+
+export function requestMutationConfirmation(options: ConfirmationOptions) {
+  return mutationConfirmationHandler ? mutationConfirmationHandler(options) : Promise.resolve(false);
+}
+
 export function useConfirmation() {
   const [pending, setPending] = useState<PendingConfirmation | null>(null);
   const pendingRef = useRef<PendingConfirmation | null>(null);
@@ -83,4 +98,15 @@ export function useConfirmation() {
   ) : null;
 
   return { confirm, dialog };
+}
+
+export function MutationConfirmationHost() {
+  const { confirm, dialog } = useConfirmation();
+
+  useEffect(
+    () => registerMutationConfirmationHandler(confirm),
+    [confirm],
+  );
+
+  return dialog;
 }

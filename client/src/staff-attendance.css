@@ -79,5 +79,6 @@
 .staff-roster-worker-link:hover strong,.staff-roster-worker-link.is-selected strong{color:#245bc1;text-decoration:underline;text-underline-offset:2px}
 .staff-roster-worker-link:focus-visible{outline:2px solid #75a0ff;outline-offset:2px}
 .staff-attendance-panel{scroll-margin-top:12px}
+.staff-calendar-day>.staff-calendar-task-pay{color:#285ca8}
 @media(max-width:560px){.staff-attendance-panel{padding:9px}.staff-attendance-panel .staff-section-heading{align-items:flex-start;flex-direction:column;gap:8px}.staff-attendance-selected-date{text-align:left}.staff-attendance-summary{align-items:flex-start;flex-direction:column;gap:4px}.staff-calendar{padding:5px;margin-block:6px 9px}.staff-calendar-weekdays,.staff-calendar-grid{gap:3px}.staff-calendar-day,.staff-calendar-blank{min-height:49px}.staff-calendar-day{gap:3px;padding:4px}.staff-calendar-day>span,.staff-calendar-day>small{font-size:6px}.staff-attendance-footer{align-items:flex-start;flex-direction:column}.staff-attendance-footer .catalog-button{width:100%;justify-content:center}}
 @media(max-width:560px){.staff-attendance-header-actions{width:100%;align-items:flex-start;justify-content:space-between;gap:8px}.staff-attendance-month-select input{max-width:100%}}

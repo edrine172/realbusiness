@@ -2,7 +2,7 @@ from decimal import Decimal
 from django.utils import timezone
 from django.utils.text import slugify
 from rest_framework import serializers
-from .models import BottleCustomerPO, BottleCustomerPOLine, BottleDelivery, BottleDeliveryLine, BottleProduct, Category, ClientMaterial, ClientMaterialPO, ClientMaterialReceipt, Customer, CustomerLedgerEntry, Expense, ExpenseBudget, Notification, PayrollLine, PayrollRun, Product, Purchase, PurchaseItem, Sale, SaleItem, StaffAttendance, StaffMember, StockMovement, Supplier, SupplierLedgerEntry
+from .models import BottleCustomerPO, BottleCustomerPOLine, BottleDelivery, BottleDeliveryLine, BottleProduct, Category, ClientMaterial, ClientMaterialPO, ClientMaterialReceipt, Customer, CustomerLedgerEntry, Expense, ExpenseBudget, Notification, PayrollLine, PayrollRun, Product, Purchase, PurchaseItem, Sale, SaleItem, StaffAttendance, StaffMember, StaffTask, StaffTaskAssignment, StaffTaskEntry, StockMovement, Supplier, SupplierLedgerEntry
 
 
 class CategorySerializer(serializers.ModelSerializer):
@@ -679,6 +679,7 @@ class StaffMemberSerializer(serializers.ModelSerializer):
     pay_basis_display = serializers.CharField(source='get_pay_basis_display', read_only=True)
     period_days_worked = serializers.SerializerMethodField()
     period_gross = serializers.SerializerMethodField()
+    period_task_pay = serializers.SerializerMethodField()
 
     def get_period_days_worked(self, worker):
         return self.context.get('attendance_totals', {}).get(worker.id, {}).get('days_worked', 0)
@@ -686,6 +687,9 @@ class StaffMemberSerializer(serializers.ModelSerializer):
     def get_period_gross(self, worker):
         totals = self.context.get('attendance_totals', {}).get(worker.id, {})
         return totals.get('gross', Decimal('0.00'))
+
+    def get_period_task_pay(self, worker):
+        return self.context.get('task_pay_totals', {}).get(worker.id, Decimal('0.00'))
 
     def validate(self, attrs):
         pay_basis = attrs.get('pay_basis', getattr(self.instance, 'pay_basis', StaffMember.PayBasis.MONTHLY))
@@ -709,7 +713,8 @@ class StaffMemberSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'employee_number', 'full_name', 'email', 'phone', 'job_title', 'department',
             'pay_basis', 'pay_basis_display', 'pay_rate', 'hours_per_period', 'withholding_percent',
-            'benefit_deduction', 'status', 'status_display', 'hire_date', 'period_days_worked', 'period_gross', 'created_at', 'updated_at',
+            'benefit_deduction', 'status', 'status_display', 'hire_date', 'period_days_worked', 'period_gross',
+            'period_task_pay', 'created_at', 'updated_at',
         ]
         read_only_fields = ['id', 'employee_number', 'created_at', 'updated_at']
 
@@ -719,8 +724,99 @@ class PayrollLineSerializer(serializers.ModelSerializer):
         model = PayrollLine
         fields = [
             'id', 'worker', 'employee_number', 'worker_name', 'job_title', 'department',
-            'pay_basis', 'hours', 'days_worked', 'gross_pay', 'withholding', 'benefits', 'net_pay',
+            'pay_basis', 'hours', 'days_worked', 'task_pay', 'gross_pay', 'withholding', 'benefits', 'net_pay',
         ]
+
+
+class StaffTaskSerializer(serializers.ModelSerializer):
+    pay_basis_display = serializers.CharField(source='get_pay_basis_display', read_only=True)
+
+    def validate(self, attrs):
+        if (
+            self.instance
+            and attrs.get('pay_basis', self.instance.pay_basis) != self.instance.pay_basis
+            and self.instance.work_entries.exists()
+        ):
+            raise serializers.ValidationError({'pay_basis': 'A task pay basis cannot change after work has been recorded.'})
+        return attrs
+
+    def validate_name(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError('Enter a task name.')
+        return value
+
+    def validate_pay_rate(self, value):
+        if value <= 0:
+            raise serializers.ValidationError('Task pay rate must be greater than zero.')
+        return value
+
+    class Meta:
+        model = StaffTask
+        fields = ['id', 'name', 'pay_basis', 'pay_basis_display', 'pay_rate', 'is_active', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class StaffTaskEntryInputSerializer(serializers.Serializer):
+    worker = serializers.PrimaryKeyRelatedField(queryset=StaffMember.objects.all())
+    task = serializers.PrimaryKeyRelatedField(queryset=StaffTask.objects.all())
+    hours = serializers.DecimalField(max_digits=7, decimal_places=2, min_value=Decimal('0'), required=False, default=Decimal('0'))
+
+    def validate(self, attrs):
+        if attrs['task'].pay_basis == StaffTask.PayBasis.HOURLY and attrs['hours'] <= 0:
+            raise serializers.ValidationError({'hours': 'Enter hours worked for an hourly task.'})
+        if attrs['task'].pay_basis != StaffTask.PayBasis.HOURLY:
+            attrs['hours'] = Decimal('0')
+        return attrs
+
+
+class StaffTaskEntrySerializer(serializers.ModelSerializer):
+    worker_name = serializers.CharField(source='worker.full_name', read_only=True)
+    employee_number = serializers.CharField(source='worker.employee_number', read_only=True)
+    pay_basis_display = serializers.CharField(source='get_pay_basis_display', read_only=True)
+
+    class Meta:
+        model = StaffTaskEntry
+        fields = [
+            'id', 'worker', 'worker_name', 'employee_number', 'task', 'task_name', 'date', 'assignment_type',
+            'pay_basis', 'pay_basis_display', 'pay_rate', 'hours', 'created_at',
+        ]
+        read_only_fields = fields
+
+
+class StaffTaskAssignmentSerializer(serializers.ModelSerializer):
+    worker_name = serializers.CharField(source='worker.full_name', read_only=True)
+    task_name = serializers.CharField(source='task.name', read_only=True)
+    pay_basis = serializers.CharField(source='task.pay_basis', read_only=True)
+    pay_basis_display = serializers.CharField(source='task.get_pay_basis_display', read_only=True)
+    pay_rate = serializers.DecimalField(source='task.pay_rate', max_digits=12, decimal_places=2, read_only=True)
+
+    def validate(self, attrs):
+        worker = attrs.get('worker', self.instance.worker if self.instance else None)
+        task = attrs.get('task', self.instance.task if self.instance else None)
+        assigned_from = attrs.get('assigned_from', self.instance.assigned_from if self.instance else None)
+        is_active = attrs.get('is_active', self.instance.is_active if self.instance else True)
+        if worker and worker.status != StaffMember.Status.ACTIVE:
+            raise serializers.ValidationError({'worker': 'Only active workers can receive permanent task assignments.'})
+        if worker and assigned_from and assigned_from < worker.hire_date:
+            raise serializers.ValidationError({'assigned_from': 'The assignment cannot start before the worker’s hire date.'})
+        if task and not task.is_active:
+            raise serializers.ValidationError({'task': 'Only active tasks can be permanently assigned.'})
+        if worker and task and is_active:
+            active_assignments = StaffTaskAssignment.objects.filter(worker=worker, task=task, is_active=True)
+            if self.instance:
+                active_assignments = active_assignments.exclude(pk=self.instance.pk)
+            if active_assignments.exists():
+                raise serializers.ValidationError({'task': 'This worker is already permanently assigned to this task.'})
+        return attrs
+
+    class Meta:
+        model = StaffTaskAssignment
+        fields = [
+            'id', 'worker', 'worker_name', 'task', 'task_name', 'pay_basis', 'pay_basis_display',
+            'pay_rate', 'assigned_from', 'is_active', 'created_at',
+        ]
+        read_only_fields = ['id', 'worker_name', 'task_name', 'pay_basis', 'pay_basis_display', 'pay_rate', 'created_at']
 
 
 class StaffAttendanceInputSerializer(serializers.Serializer):

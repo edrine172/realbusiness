@@ -415,11 +415,47 @@ export default function ProductCatalog() {
       if (rows.length < 2) { notify('The file has no product rows.'); return; }
       const headers = rows[0].map((value) => value.trim().toLowerCase());
       const index = (key: string) => headers.indexOf(key);
+      const productsToImport = rows.slice(1).flatMap((values) => {
+        const category = categories.find((item) => item.name.toLowerCase() === values[index('category')]?.toLowerCase());
+        if (!category || !values[index('sku')] || !values[index('product')]) return [];
+        const supplier = suppliers.find((item) => item.name.toLowerCase() === values[index('supplier')]?.toLowerCase());
+        return [{
+          sku: values[index('sku')],
+          name: values[index('product')],
+          category: category.id,
+          supplier: supplier?.id ?? null,
+          quantity: Number(values[index('quantity')] || 0),
+          reorder_level: Number(values[index('reorder level')] || 0),
+          cost_price: values[index('cost price')] || '0',
+          unit_price: values[index('unit price')] || '0',
+          location: values[index('location')] || '',
+        }];
+      });
+      if (!productsToImport.length) {
+        notify('No valid product rows were found. Check that each row has a product name, SKU, and known category.');
+        return;
+      }
+      const confirmed = await confirm({
+        title: `Import ${productsToImport.length} products?`,
+        message: 'This will add the valid product rows from the selected file to your catalog.',
+        confirmLabel: 'Import products',
+      });
+      if (!confirmed) return;
       for (const values of rows.slice(1)) {
         const category = categories.find((item) => item.name.toLowerCase() === values[index('category')]?.toLowerCase());
         if (!category || !values[index('sku')] || !values[index('product')]) continue;
         const supplier = suppliers.find((item) => item.name.toLowerCase() === values[index('supplier')]?.toLowerCase());
-        await api.createProduct({ sku: values[index('sku')], name: values[index('product')], category: category.id, supplier: supplier?.id ?? null, quantity: Number(values[index('quantity')] || 0), reorder_level: Number(values[index('reorder level')] || 0), cost_price: values[index('cost price')] || '0', unit_price: values[index('unit price')] || '0', location: values[index('location')] || '' });
+        await api.createProduct({
+          sku: values[index('sku')],
+          name: values[index('product')],
+          category: category.id,
+          supplier: supplier?.id ?? null,
+          quantity: Number(values[index('quantity')] || 0),
+          reorder_level: Number(values[index('reorder level')] || 0),
+          cost_price: values[index('cost price')] || '0',
+          unit_price: values[index('unit price')] || '0',
+          location: values[index('location')] || '',
+        }, { skipConfirmation: true });
         imported += 1;
       }
       await loadData(); notify(`${imported} product${imported === 1 ? '' : 's'} imported. Rows with unknown categories were skipped.`);
