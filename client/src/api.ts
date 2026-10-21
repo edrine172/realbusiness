@@ -7,6 +7,21 @@ const API_BASE = normalizedApiBase
   : (import.meta.env.DEV ? 'http://localhost:8000/api' : '');
 let accessCsrfToken = '';
 
+async function fetchGet(url: string, options?: RequestInit) {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return await fetch(url, { ...options, method: 'GET' });
+    } catch (cause) {
+      if (!(cause instanceof TypeError)) throw cause;
+      if (attempt === 2) {
+        throw new Error('Could not reach the server. Check your connection and try again.');
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1)));
+    }
+  }
+  throw new Error('Could not reach the server. Check your connection and try again.');
+}
+
 function apiUrl(path: string) {
   if (!API_BASE) {
     throw new Error('Backend URL is not configured. Set VITE_API_BASE_URL in Vercel to your Render service URL ending in /api, then redeploy.');
@@ -710,7 +725,7 @@ export type StaffMemberInput = Omit<StaffMember, 'id' | 'employee_number' | 'pay
 
 async function ensureCsrfToken() {
   if (accessCsrfToken) return;
-  const response = await fetch(apiUrl('/access/csrf/'), { credentials: 'include' });
+  const response = await fetchGet(apiUrl('/access/csrf/'), { credentials: 'include' });
   if (!response.ok) throw csrfInitializationError(response);
   const csrfData = await response.json() as { csrf_token: string };
   accessCsrfToken = csrfData.csrf_token;
@@ -784,11 +799,9 @@ async function request<T>(
     headers.set('X-CSRFToken', accessCsrfToken);
   }
 
-  const response = await fetch(apiUrl(path), {
-    ...options,
-    credentials: 'include',
-    headers,
-  });
+  const response = method === 'GET'
+    ? await fetchGet(apiUrl(path), { ...options, credentials: 'include', headers })
+    : await fetch(apiUrl(path), { ...options, credentials: 'include', headers });
 
   if (!response.ok && method !== 'GET' && response.status === 403) {
     accessCsrfToken = '';
@@ -871,7 +884,7 @@ function mutationActionName(path: string) {
 }
 
 async function accountAuthRequest(path: string, payload: Record<string, string>) {
-  const csrfResponse = await fetch(apiUrl('/access/csrf/'), { credentials: 'include' });
+  const csrfResponse = await fetchGet(apiUrl('/access/csrf/'), { credentials: 'include' });
   if (!csrfResponse.ok) throw csrfInitializationError(csrfResponse);
   const csrfData = await csrfResponse.json() as { csrf_token: string };
   accessCsrfToken = csrfData.csrf_token;
@@ -895,7 +908,7 @@ export const api = {
     return result;
   },
   async accessSession() {
-    const response = await fetch(apiUrl('/access/csrf/'), { credentials: 'include' });
+    const response = await fetchGet(apiUrl('/access/csrf/'), { credentials: 'include' });
     if (!response.ok) throw csrfInitializationError(response);
     const csrf = await response.json() as { csrf_token: string };
     accessCsrfToken = csrf.csrf_token;
