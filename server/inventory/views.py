@@ -23,20 +23,26 @@ from .date_ranges import day_range
 from .reports import build_report_summary
 from .permissions import RoleModelPermissions
 
-DAILY_TARGET_UNITS = 15
-SUNDAY_TARGET_UNITS = 10
-DAILY_TARGET_MET_WAGE = Decimal('7000.00')
-DAILY_TARGET_MISSED_WAGE = Decimal('6000.00')
-SUNDAY_TARGET_MET_WAGE = Decimal('5000.00')
-SUNDAY_TARGET_MISSED_WAGE = Decimal('4000.00')
+DAILY_WAGE_TIERS = (
+    (15, Decimal('7000.00')),
+    (12, Decimal('6000.00')),
+    (8, Decimal('5000.00')),
+)
+SUNDAY_WAGE_TIERS = (
+    (15, Decimal('5000.00')),
+    (12, Decimal('4500.00')),
+    (8, Decimal('4000.00')),
+)
 
 
-def daily_attendance_wage(work_date, attended, output_quantity):
+def daily_attendance_wage(work_date, attended, output_quantity, wage_override=None):
     if not attended:
         return Decimal('0.00')
-    if work_date.weekday() == 6:
-        return SUNDAY_TARGET_MET_WAGE if output_quantity >= SUNDAY_TARGET_UNITS else SUNDAY_TARGET_MISSED_WAGE
-    return DAILY_TARGET_MET_WAGE if output_quantity >= DAILY_TARGET_UNITS else DAILY_TARGET_MISSED_WAGE
+    wage_tiers = SUNDAY_WAGE_TIERS if work_date.weekday() == 6 else DAILY_WAGE_TIERS
+    return next(
+        (wage for units, wage in wage_tiers if output_quantity >= units),
+        wage_override if wage_override is not None else Decimal('0.00'),
+    )
 
 
 def refresh_daily_attendance_wage(worker, work_date):
@@ -48,7 +54,7 @@ def refresh_daily_attendance_wage(worker, work_date):
         and worker.pay_basis == StaffMember.PayBasis.DAILY
         and not StaffTaskEntry.objects.filter(worker=worker, date=work_date).exists()
     ):
-        wage = daily_attendance_wage(work_date, True, attendance.output_quantity)
+        wage = daily_attendance_wage(work_date, True, attendance.output_quantity, attendance.daily_wage_override)
     else:
         wage = Decimal('0.00')
     if attendance.daily_wage != wage:
@@ -885,7 +891,8 @@ class StaffAttendanceViewSet(viewsets.ViewSet):
                 defaults={
                     'attended': attended,
                     'output_quantity': output_quantity,
-                    'daily_wage': daily_attendance_wage(attendance_date, attended, output_quantity)
+                    'daily_wage_override': row['daily_wage_override'],
+                    'daily_wage': daily_attendance_wage(attendance_date, attended, output_quantity, row['daily_wage_override'])
                     if worker.pay_basis == StaffMember.PayBasis.DAILY else Decimal('0.00'),
                     'recorded_by': request.user,
                 },

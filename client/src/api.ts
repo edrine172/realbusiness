@@ -639,6 +639,7 @@ export interface StaffAttendance {
   date: string;
   attended: boolean;
   output_quantity: number;
+  daily_wage_override: string | null;
   daily_wage: string;
   created_at: string;
   updated_at: string;
@@ -1005,7 +1006,7 @@ export const api = {
     request<Expense[]>('/expenses/bulk-upload/', { method: 'POST', body: JSON.stringify({ expenses }) }),
   staffDashboard: (period?: string) => request<StaffDashboardData>(`/staff/dashboard/${period ? `?period=${encodeURIComponent(period)}` : ''}`),
   staffAttendance: (period: string) => request<StaffAttendance[]>(`/staff/attendance/?period=${encodeURIComponent(period)}`),
-  recordStaffAttendance: (date: string, records: Array<{ worker: number; attended: boolean; output_quantity: number }>) =>
+  recordStaffAttendance: (date: string, records: Array<{ worker: number; attended: boolean; output_quantity: number; daily_wage_override?: number | null }>) =>
     request<StaffAttendance[]>('/staff/attendance/record_day/', { method: 'POST', body: JSON.stringify({ date, records }) }),
   staffTasks: () => request<StaffTask[]>('/staff/tasks/'),
   createStaffTask: (task: Pick<StaffTask, 'name' | 'pay_basis' | 'pay_rate'>) =>

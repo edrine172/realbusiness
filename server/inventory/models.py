@@ -515,6 +515,7 @@ class StaffAttendance(models.Model):
     date = models.DateField()
     attended = models.BooleanField(default=False)
     output_quantity = models.PositiveIntegerField(default=0)
+    daily_wage_override = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     daily_wage = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     recorded_by = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='staff_attendance_records')
     created_at = models.DateTimeField(auto_now_add=True)

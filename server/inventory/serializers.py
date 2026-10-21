@@ -823,10 +823,17 @@ class StaffAttendanceInputSerializer(serializers.Serializer):
     worker = serializers.PrimaryKeyRelatedField(queryset=StaffMember.objects.all())
     attended = serializers.BooleanField()
     output_quantity = serializers.IntegerField(min_value=0, required=False, default=0)
+    daily_wage_override = serializers.DecimalField(
+        max_digits=12, decimal_places=2, min_value=Decimal('0.00'), required=False, allow_null=True,
+    )
 
     def validate(self, attrs):
+        attrs.setdefault('daily_wage_override', None)
         if not attrs['attended'] or attrs['worker'].pay_basis != StaffMember.PayBasis.DAILY:
             attrs['output_quantity'] = 0
+            attrs['daily_wage_override'] = None
+        elif attrs['output_quantity'] >= 8 and attrs.get('daily_wage_override') is not None:
+            raise serializers.ValidationError({'daily_wage_override': 'A supervisor wage override is only allowed below 8 units.'})
         return attrs
 
 
@@ -836,7 +843,7 @@ class StaffAttendanceSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = StaffAttendance
-        fields = ['id', 'worker', 'worker_name', 'employee_number', 'date', 'attended', 'output_quantity', 'daily_wage', 'created_at', 'updated_at']
+        fields = ['id', 'worker', 'worker_name', 'employee_number', 'date', 'attended', 'output_quantity', 'daily_wage_override', 'daily_wage', 'created_at', 'updated_at']
         read_only_fields = ['id', 'worker_name', 'employee_number', 'created_at', 'updated_at']
 
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import {
   AlertTriangle, Barcode, Boxes, Check, ChevronDown, ChevronLeft, ClipboardList,
   ChevronRight, CircleHelp, LayoutDashboard, ListFilter,
@@ -8,24 +8,25 @@ import {
 import { api, formatCurrency as currency, getCurrencyDisplay, setCurrencyDisplay, subscribeCurrencyDisplay, type AccessUser, type Category, type Product, type Supplier } from './api';
 import { downloadSpreadsheet, readSpreadsheetRows } from './fileFormats';
 import FileActionMenu from './FileActionMenu';
-import DashboardOverview from './DashboardOverview';
-import InventoryDashboard from './InventoryDashboard';
-import PurchasesDashboard from './PurchasesDashboard';
-import PurchaseOrderClient from './PurchaseOrderClient';
-import PosDashboard from './PosDashboard';
-import ReportsDashboard from './ReportsDashboard';
-import CustomersDashboard from './CustomersDashboard';
-import SuppliersDashboard from './SuppliersDashboard';
-import ExpensesDashboard from './ExpensesDashboard';
-import UsersDashboard from './UsersDashboard';
-import SettingsDashboard from './SettingsDashboard';
-import StaffDashboard from './StaffDashboard';
-import NotificationCenter from './NotificationCenter';
 import type { NotificationDashboard } from './api';
-import HelpCenter from './HelpCenter';
-import AccountEntry from './AccountEntry';
-import LandingPage from './LandingPage';
 import { useConfirmation } from './ConfirmDialog';
+
+const DashboardOverview = lazy(() => import('./DashboardOverview'));
+const InventoryDashboard = lazy(() => import('./InventoryDashboard'));
+const PurchasesDashboard = lazy(() => import('./PurchasesDashboard'));
+const PurchaseOrderClient = lazy(() => import('./PurchaseOrderClient'));
+const PosDashboard = lazy(() => import('./PosDashboard'));
+const ReportsDashboard = lazy(() => import('./ReportsDashboard'));
+const CustomersDashboard = lazy(() => import('./CustomersDashboard'));
+const SuppliersDashboard = lazy(() => import('./SuppliersDashboard'));
+const ExpensesDashboard = lazy(() => import('./ExpensesDashboard'));
+const UsersDashboard = lazy(() => import('./UsersDashboard'));
+const SettingsDashboard = lazy(() => import('./SettingsDashboard'));
+const StaffDashboard = lazy(() => import('./StaffDashboard'));
+const NotificationCenter = lazy(() => import('./NotificationCenter'));
+const HelpCenter = lazy(() => import('./HelpCenter'));
+const AccountEntry = lazy(() => import('./AccountEntry'));
+const LandingPage = lazy(() => import('./LandingPage'));
 
 type ProductDraft = Omit<Product, 'id' | 'category_name' | 'supplier_name' | 'updated_at' | 'created_at' | 'is_active'>;
 type StatusFilter = 'All statuses' | 'In stock' | 'Low stock' | 'Out of stock';
@@ -468,8 +469,8 @@ export default function ProductCatalog() {
     importRef.current.click();
   }
 
-  if (activeView === 'home') return <LandingPage onOpenAccount={(mode) => { setAccountEntryMode(mode); setActiveView('auth'); }}/>;
-  if (activeView === 'auth') return <AccountEntry initialMode={accountEntryMode} onBack={() => setActiveView('home')} onAuthenticated={completeAccountSignIn}/>;
+  if (activeView === 'home') return <Suspense fallback={<section className="overview-state" role="status">Loading…</section>}><LandingPage onOpenAccount={(mode) => { setAccountEntryMode(mode); setActiveView('auth'); }}/></Suspense>;
+  if (activeView === 'auth') return <Suspense fallback={<section className="overview-state" role="status">Loading sign-in…</section>}><AccountEntry initialMode={accountEntryMode} onBack={() => setActiveView('home')} onAuthenticated={completeAccountSignIn}/></Suspense>;
 
   return <div className="catalog-shell">
     <aside className="catalog-sidebar">
@@ -495,25 +496,25 @@ export default function ProductCatalog() {
       <div className="catalog-sidebar-status"><i/>{connected ? 'Cloud Sync: Live' : 'Connecting to API'}<span>v1.0</span></div>
     </aside>
     <main className="catalog-main">
-      <header className="catalog-topbar"><div className="catalog-business"><span>BUSINESS UNIT</span><strong>Apex Supply Co. - Main Warehouse <ChevronDown size={13}/></strong></div><div className="catalog-top-actions">{activeView === 'products' && <><label className="catalog-search global-search"><Search size={15}/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search products, SKUs, invoices"/><kbd>⌘ K</kbd></label><button className="catalog-button catalog-button-primary" onClick={() => setModalProduct(null)}><Plus size={15}/>New<ChevronDown size={12}/></button></>}<NotificationCenter onNavigate={setActiveView}/><button className="catalog-icon-button" aria-label="Help Center" title="Help Center" onClick={() => setHelpOpen(true)}><CircleHelp size={17}/></button><div className="catalog-account" ref={accountMenuRef}><button className="catalog-account-trigger" type="button" aria-haspopup="menu" aria-expanded={accountMenuOpen} aria-controls="catalog-account-menu" onClick={() => setAccountMenuOpen((open) => !open)}><span className="catalog-user-avatar">{accessUser ? (accessUser.first_name || accessUser.username).slice(0, 2).toUpperCase() : '—'}</span><span className="catalog-user-name">{accessUser ? accessUser.display_name || accessUser.username : 'Not signed in'}<small>{accessUser?.is_superuser || accessUser?.is_staff ? 'Administrator' : accessUser ? 'Workspace member' : 'Sign in to continue'}</small></span><ChevronDown className={accountMenuOpen ? 'is-open' : ''} size={13}/></button>{accountMenuOpen && <div className="catalog-account-menu" id="catalog-account-menu" role="menu" aria-label="Account menu">{accessUser ? <><div className="catalog-account-details"><strong>{accessUser.display_name || `${accessUser.first_name} ${accessUser.last_name}`.trim() || accessUser.username}</strong><span>{accessUser.email || accessUser.username}</span></div><button className="catalog-account-action" type="button" role="menuitem" onClick={() => void signOutCurrentUser()}><LogOut size={14}/>Sign out</button></> : <div className="catalog-account-details"><strong>No user signed in</strong><span>Sign in to access account options.</span></div>}</div>}</div></div></header>
+      <header className="catalog-topbar"><div className="catalog-business"><span>BUSINESS UNIT</span><strong>Apex Supply Co. - Main Warehouse <ChevronDown size={13}/></strong></div><div className="catalog-top-actions">{activeView === 'products' && <><label className="catalog-search global-search"><Search size={15}/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search products, SKUs, invoices"/><kbd>⌘ K</kbd></label><button className="catalog-button catalog-button-primary" onClick={() => setModalProduct(null)}><Plus size={15}/>New<ChevronDown size={12}/></button></>}<Suspense fallback={null}><NotificationCenter onNavigate={setActiveView}/></Suspense><button className="catalog-icon-button" aria-label="Help Center" title="Help Center" onClick={() => setHelpOpen(true)}><CircleHelp size={17}/></button><div className="catalog-account" ref={accountMenuRef}><button className="catalog-account-trigger" type="button" aria-haspopup="menu" aria-expanded={accountMenuOpen} aria-controls="catalog-account-menu" onClick={() => setAccountMenuOpen((open) => !open)}><span className="catalog-user-avatar">{accessUser ? (accessUser.first_name || accessUser.username).slice(0, 2).toUpperCase() : '—'}</span><span className="catalog-user-name">{accessUser ? accessUser.display_name || accessUser.username : 'Not signed in'}<small>{accessUser?.is_superuser || accessUser?.is_staff ? 'Administrator' : accessUser ? 'Workspace member' : 'Sign in to continue'}</small></span><ChevronDown className={accountMenuOpen ? 'is-open' : ''} size={13}/></button>{accountMenuOpen && <div className="catalog-account-menu" id="catalog-account-menu" role="menu" aria-label="Account menu">{accessUser ? <><div className="catalog-account-details"><strong>{accessUser.display_name || `${accessUser.first_name} ${accessUser.last_name}`.trim() || accessUser.username}</strong><span>{accessUser.email || accessUser.username}</span></div><button className="catalog-account-action" type="button" role="menuitem" onClick={() => void signOutCurrentUser()}><LogOut size={14}/>Sign out</button></> : <div className="catalog-account-details"><strong>No user signed in</strong><span>Sign in to access account options.</span></div>}</div>}</div></div></header>
       {currencyError && <div className="currency-rate-warning" role="status">{currencyError} Values remain stored in Ugandan shillings.</div>}
       {dashboardViews.has(activeView) && activeView !== 'staff' && accessState !== 'signedIn'
         ? accessState === 'checking' || accessState === 'idle'
           ? <section className="overview-state">Checking administrator session…</section>
           : <AdminLoginPanel section={dashboardLabel(activeView)} error={accessError} onLogin={signIn}/>
         : <div>
-      {mountedDashboards.has('staff') && <DashboardPanel active={activeView === 'staff'}><StaffDashboard onNavigate={setActiveView} onSignOut={signOut}/></DashboardPanel>}
-      {mountedDashboards.has('settings') && <DashboardPanel active={activeView === 'settings'}><SettingsDashboard onNavigate={setActiveView} onSignOut={signOut}/></DashboardPanel>}
-      {mountedDashboards.has('overview') && <DashboardPanel active={activeView === 'overview'}><DashboardOverview onOpenProducts={() => setActiveView('products')} onOpenInventory={() => setActiveView('inventory')} onOpenPurchases={() => setActiveView('purchases')} onOpenPOS={() => setActiveView('pos')} onOpenReports={() => setActiveView('reports')} onOpenExpenses={() => setActiveView('expenses')}/></DashboardPanel>}
-      {mountedDashboards.has('inventory') && <DashboardPanel active={activeView === 'inventory'}><InventoryDashboard onOpenProducts={() => setActiveView('products')} onOpenPurchases={() => setActiveView('purchases')} onInventoryChanged={loadData}/></DashboardPanel>}
-      {mountedDashboards.has('purchases') && <DashboardPanel active={activeView === 'purchases'}><PurchasesDashboard initialSupplierId={purchaseSupplierId} onInitialSupplierUsed={() => setPurchaseSupplierId(null)} onOpenInventory={() => setActiveView('inventory')} onOpenProducts={() => setActiveView('products')}/></DashboardPanel>}
-      {mountedDashboards.has('po-client') && <DashboardPanel active={activeView === 'po-client'}><PurchaseOrderClient/></DashboardPanel>}
-      {mountedDashboards.has('pos') && <DashboardPanel active={activeView === 'pos'}><PosDashboard initialCustomerId={posCustomerId} onOpenProducts={() => setActiveView('products')} onOpenInventory={() => setActiveView('inventory')} onSaleCompleted={loadData}/></DashboardPanel>}
-      {mountedDashboards.has('customers') && <DashboardPanel active={activeView === 'customers'}><CustomersDashboard onStartSale={(customerId) => { setPosCustomerId(customerId); setActiveView('pos'); }} onOpenSales={() => setActiveView('sales')}/></DashboardPanel>}
-      {mountedDashboards.has('suppliers') && <DashboardPanel active={activeView === 'suppliers'}><SuppliersDashboard onOpenPurchases={(supplierId) => { setPurchaseSupplierId(supplierId); setActiveView('purchases'); }} onOpenInventory={() => setActiveView('inventory')}/></DashboardPanel>}
-      {mountedDashboards.has('expenses') && <DashboardPanel active={activeView === 'expenses'}><ExpensesDashboard onOpenReports={() => setActiveView('reports')}/></DashboardPanel>}
-      {mountedDashboards.has('users') && <DashboardPanel active={activeView === 'users'}><UsersDashboard onSignOut={signOut}/></DashboardPanel>}
-      {(mountedDashboards.has('reports') || mountedDashboards.has('sales')) && <DashboardPanel active={activeView === 'reports' || activeView === 'sales'}><ReportsDashboard onOpenInventory={() => setActiveView('inventory')} onOpenPurchases={() => setActiveView('purchases')} onOpenPOS={() => setActiveView('pos')} onOpenExpenses={() => setActiveView('expenses')}/></DashboardPanel>}
+      {mountedDashboards.has('staff') && <DashboardPanel active={activeView === 'staff'}><Suspense fallback={<section className="overview-state" role="status">Loading staff…</section>}><StaffDashboard onNavigate={setActiveView} onSignOut={signOut}/></Suspense></DashboardPanel>}
+      {mountedDashboards.has('settings') && <DashboardPanel active={activeView === 'settings'}><Suspense fallback={<section className="overview-state" role="status">Loading settings…</section>}><SettingsDashboard onNavigate={setActiveView} onSignOut={signOut}/></Suspense></DashboardPanel>}
+      {mountedDashboards.has('overview') && <DashboardPanel active={activeView === 'overview'}><Suspense fallback={<section className="overview-state" role="status">Loading dashboard…</section>}><DashboardOverview onOpenProducts={() => setActiveView('products')} onOpenInventory={() => setActiveView('inventory')} onOpenPurchases={() => setActiveView('purchases')} onOpenPOS={() => setActiveView('pos')} onOpenReports={() => setActiveView('reports')} onOpenExpenses={() => setActiveView('expenses')}/></Suspense></DashboardPanel>}
+      {mountedDashboards.has('inventory') && <DashboardPanel active={activeView === 'inventory'}><Suspense fallback={<section className="overview-state" role="status">Loading inventory…</section>}><InventoryDashboard onOpenProducts={() => setActiveView('products')} onOpenPurchases={() => setActiveView('purchases')} onInventoryChanged={loadData}/></Suspense></DashboardPanel>}
+      {mountedDashboards.has('purchases') && <DashboardPanel active={activeView === 'purchases'}><Suspense fallback={<section className="overview-state" role="status">Loading purchases…</section>}><PurchasesDashboard initialSupplierId={purchaseSupplierId} onInitialSupplierUsed={() => setPurchaseSupplierId(null)} onOpenInventory={() => setActiveView('inventory')} onOpenProducts={() => setActiveView('products')}/></Suspense></DashboardPanel>}
+      {mountedDashboards.has('po-client') && <DashboardPanel active={activeView === 'po-client'}><Suspense fallback={<section className="overview-state" role="status">Loading PO client…</section>}><PurchaseOrderClient/></Suspense></DashboardPanel>}
+      {mountedDashboards.has('pos') && <DashboardPanel active={activeView === 'pos'}><Suspense fallback={<section className="overview-state" role="status">Loading point of sale…</section>}><PosDashboard initialCustomerId={posCustomerId} onOpenProducts={() => setActiveView('products')} onOpenInventory={() => setActiveView('inventory')} onSaleCompleted={loadData}/></Suspense></DashboardPanel>}
+      {mountedDashboards.has('customers') && <DashboardPanel active={activeView === 'customers'}><Suspense fallback={<section className="overview-state" role="status">Loading customers…</section>}><CustomersDashboard onStartSale={(customerId) => { setPosCustomerId(customerId); setActiveView('pos'); }} onOpenSales={() => setActiveView('sales')}/></Suspense></DashboardPanel>}
+      {mountedDashboards.has('suppliers') && <DashboardPanel active={activeView === 'suppliers'}><Suspense fallback={<section className="overview-state" role="status">Loading suppliers…</section>}><SuppliersDashboard onOpenPurchases={(supplierId) => { setPurchaseSupplierId(supplierId); setActiveView('purchases'); }} onOpenInventory={() => setActiveView('inventory')}/></Suspense></DashboardPanel>}
+      {mountedDashboards.has('expenses') && <DashboardPanel active={activeView === 'expenses'}><Suspense fallback={<section className="overview-state" role="status">Loading expenses…</section>}><ExpensesDashboard onOpenReports={() => setActiveView('reports')}/></Suspense></DashboardPanel>}
+      {mountedDashboards.has('users') && <DashboardPanel active={activeView === 'users'}><Suspense fallback={<section className="overview-state" role="status">Loading users…</section>}><UsersDashboard onSignOut={signOut}/></Suspense></DashboardPanel>}
+      {(mountedDashboards.has('reports') || mountedDashboards.has('sales')) && <DashboardPanel active={activeView === 'reports' || activeView === 'sales'}><Suspense fallback={<section className="overview-state" role="status">Loading reports…</section>}><ReportsDashboard onOpenInventory={() => setActiveView('inventory')} onOpenPurchases={() => setActiveView('purchases')} onOpenPOS={() => setActiveView('pos')} onOpenExpenses={() => setActiveView('expenses')}/></Suspense></DashboardPanel>}
       {mountedDashboards.has('products') && <DashboardPanel active={activeView === 'products'}><>
       <section className="catalog-heading"><div><div className="catalog-breadcrumb">Inventory <span>›</span> <b>Products Catalog</b></div><h1>Products Catalog</h1><p>Deactivate products to remove them from sales while preserving history; permanently delete only unused products.</p></div><div className="catalog-heading-actions"><button className="catalog-button catalog-button-light" onClick={() => setShowCategoryManager(true)}><Tags size={14}/>Manage Categories</button><button className="catalog-button catalog-button-light" onClick={() => printLabels(products.filter((product) => selected.includes(product.id)))}><Printer size={14}/>Print Barcodes</button><FileActionMenu label="Import" direction="import" options={[{ label: 'CSV file', onSelect: () => chooseProductImport('.csv,text/csv') }, { label: 'Excel workbook', onSelect: () => chooseProductImport('.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel') }]}/><input ref={importRef} className="catalog-hidden" type="file" onChange={(event) => void importProducts(event.target.files?.[0])}/><FileActionMenu label="Export" direction="export" options={[{ label: 'CSV file', onSelect: exportCsv }, { label: 'Excel workbook', onSelect: () => void exportXlsx() }]}/><button className="catalog-button catalog-button-primary" onClick={() => setModalProduct(null)}><Plus size={15}/>Add Product</button></div></section>
       <section className="catalog-metrics" aria-label="Product catalog metrics">
@@ -568,7 +569,7 @@ export default function ProductCatalog() {
     </div>}
     {modalProduct !== undefined && <ProductForm key={modalProduct?.id ?? 'new'} product={modalProduct} categories={categories} suppliers={suppliers} onClose={() => setModalProduct(undefined)} onSaved={async () => { setModalProduct(undefined); await loadData(); notify('Product saved to inventory.'); }}/ >}
     {showCategoryManager && <CategoryManager categories={categories} onClose={() => setShowCategoryManager(false)} onChanged={loadData}/>}
-    {helpOpen && <HelpCenter onClose={() => setHelpOpen(false)} onNavigate={(view) => { setActiveView(view); setHelpOpen(false); }}/ >}
+    {helpOpen && <Suspense fallback={<section className="overview-state" role="status">Loading help center…</section>}><HelpCenter onClose={() => setHelpOpen(false)} onNavigate={(view) => { setActiveView(view); setHelpOpen(false); }}/></Suspense>}
     {dialog}
   </div>;
 }
