@@ -2,22 +2,21 @@ import { requestMutationConfirmation } from './ConfirmDialog';
 
 const configuredApiBase = import.meta.env.VITE_API_BASE_URL?.trim();
 const normalizedApiBase = configuredApiBase?.replace(/\/+$/, '');
-const configuredDevelopmentApiBase = normalizedApiBase
+const API_BASE = normalizedApiBase
   ? (normalizedApiBase.endsWith('/api') ? normalizedApiBase : `${normalizedApiBase}/api`)
-  : 'http://localhost:8000/api';
-const API_BASE = import.meta.env.DEV ? configuredDevelopmentApiBase : '/api';
+  : (import.meta.env.DEV ? 'http://localhost:8000/api' : '');
 let accessCsrfToken = '';
 
 async function fetchWithNetworkRetries(url: string, options?: RequestInit) {
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+  for (let attempt = 0; attempt < 7; attempt += 1) {
     try {
       return await fetch(url, options);
     } catch (cause) {
       if (!(cause instanceof TypeError)) throw cause;
-      if (attempt === 2) {
+      if (attempt === 6) {
         throw new Error('Could not reach the server. Check your connection and try again.');
       }
-      await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1)));
+      await new Promise((resolve) => setTimeout(resolve, Math.min(1000 * (2 ** attempt), 12000)));
     }
   }
   throw new Error('Could not reach the server. Check your connection and try again.');
