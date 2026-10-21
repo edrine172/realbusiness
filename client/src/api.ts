@@ -7,10 +7,10 @@ const API_BASE = normalizedApiBase
   : (import.meta.env.DEV ? 'http://localhost:8000/api' : '');
 let accessCsrfToken = '';
 
-async function fetchGet(url: string, options?: RequestInit) {
+async function fetchWithNetworkRetries(url: string, options?: RequestInit) {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      return await fetch(url, { ...options, method: 'GET' });
+      return await fetch(url, options);
     } catch (cause) {
       if (!(cause instanceof TypeError)) throw cause;
       if (attempt === 2) {
@@ -20,6 +20,10 @@ async function fetchGet(url: string, options?: RequestInit) {
     }
   }
   throw new Error('Could not reach the server. Check your connection and try again.');
+}
+
+async function fetchGet(url: string, options?: RequestInit) {
+  return fetchWithNetworkRetries(url, { ...options, method: 'GET' });
 }
 
 function apiUrl(path: string) {
@@ -747,6 +751,7 @@ async function request<T>(
   path: string,
   options?: RequestInit,
   confirmationMode: 'required' | 'skip' = 'required',
+  retryNetworkFailures = false,
 ): Promise<T> {
   const method = options?.method?.toUpperCase() ?? 'GET';
   const normalizedPath = path.split('?')[0];
@@ -801,7 +806,9 @@ async function request<T>(
 
   const response = method === 'GET'
     ? await fetchGet(apiUrl(path), { ...options, credentials: 'include', headers })
-    : await fetch(apiUrl(path), { ...options, credentials: 'include', headers });
+    : retryNetworkFailures
+      ? await fetchWithNetworkRetries(apiUrl(path), { ...options, credentials: 'include', headers })
+      : await fetch(apiUrl(path), { ...options, credentials: 'include', headers });
 
   if (!response.ok && method !== 'GET' && response.status === 403) {
     accessCsrfToken = '';
@@ -1020,7 +1027,7 @@ export const api = {
   staffDashboard: (period?: string) => request<StaffDashboardData>(`/staff/dashboard/${period ? `?period=${encodeURIComponent(period)}` : ''}`),
   staffAttendance: (period: string) => request<StaffAttendance[]>(`/staff/attendance/?period=${encodeURIComponent(period)}`),
   recordStaffAttendance: (date: string, records: Array<{ worker: number; attended: boolean; output_quantity: number; daily_wage_override?: number | null }>) =>
-    request<StaffAttendance[]>('/staff/attendance/record_day/', { method: 'POST', body: JSON.stringify({ date, records }) }),
+    request<StaffAttendance[]>('/staff/attendance/record_day/', { method: 'POST', body: JSON.stringify({ date, records }) }, 'required', true),
   staffTasks: () => request<StaffTask[]>('/staff/tasks/'),
   createStaffTask: (task: Pick<StaffTask, 'name' | 'pay_basis' | 'pay_rate'>) =>
     request<StaffTask>('/staff/tasks/', { method: 'POST', body: JSON.stringify(task) }),
