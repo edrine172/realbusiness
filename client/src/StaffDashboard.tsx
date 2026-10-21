@@ -489,6 +489,23 @@ function TaskPayPanel({ period, date, workers, attendanceRecords, locked, refres
     setTaskRate(task.pay_rate);
   }
 
+  async function setTaskActive(task: StaffTask, isActive: boolean) {
+    setSaving(true);
+    setError('');
+    setNotice('');
+    try {
+      await api.updateStaffTask(task.id, { is_active: isActive });
+      const refreshedTasks = await api.staffTasks();
+      setTasks(refreshedTasks);
+      onTasksChange(refreshedTasks);
+      setNotice(isActive ? 'Task activated.' : 'Task deactivated. Existing task pay records are unchanged.');
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : `Task could not be ${isActive ? 'activated' : 'deactivated'}.`);
+    } finally {
+      setSaving(false);
+    }
+  }
+
   function addAssignment() {
     const assignment = eligibleWorkers.flatMap((worker) => activeTasks.map((task) => ({ worker, task })))
       .find(({ worker, task }) =>
@@ -596,7 +613,7 @@ function TaskPayPanel({ period, date, workers, attendanceRecords, locked, refres
           <div className="staff-task-rate-fields"><label className="catalog-field">Rate basis<select value={taskBasis} onChange={(event) => setTaskBasis(event.target.value as StaffTask['pay_basis'])}><option value="daily">Daily</option><option value="hourly">Hourly</option><option value="monthly">Monthly</option></select></label><label className="catalog-field">Salary rate (UGX)<input required type="number" min="0.01" step="0.01" value={taskRate} onChange={(event) => setTaskRate(event.target.value)} placeholder="Enter rate"/></label></div>
           <div className="staff-task-form-actions"><button className="catalog-button catalog-button-primary" disabled={saving}>{saving ? 'Saving…' : editingTaskId ? 'Update task' : 'Add task'}</button>{editingTaskId && <button type="button" className="catalog-button catalog-button-light" onClick={resetTaskForm}>Cancel</button>}</div>
         </form>
-        <div className="staff-task-list"><strong>Available tasks</strong>{tasks.map((task) => <div className={`staff-task-list-row ${!task.is_active ? 'is-inactive' : ''}`} key={task.id}><span><b>{task.name}</b><small>{task.pay_basis_display} rate · {currency(task.pay_rate)}{task.is_active ? '' : ' · Inactive'}</small></span><button type="button" className="catalog-button catalog-button-light" disabled={saving} onClick={() => editTask(task)}>Edit</button>{task.is_active && <button type="button" className="catalog-button catalog-button-light" disabled={saving} onClick={async () => { setSaving(true); setError(''); try { await api.updateStaffTask(task.id, { is_active: false }); const refreshedTasks = await api.staffTasks(); setTasks(refreshedTasks); onTasksChange(refreshedTasks); setNotice('Task deactivated. Existing task pay records are unchanged.'); } catch (cause) { setError(cause instanceof Error ? cause.message : 'Task could not be deactivated.'); } finally { setSaving(false); } }}>Deactivate</button>}</div>)}{!tasks.length && <p className="staff-history-empty">Add a task and its salary rate to assign task-based pay.</p>}</div>
+        <div className="staff-task-list"><strong>Available tasks</strong>{tasks.map((task) => <div className={`staff-task-list-row ${!task.is_active ? 'is-inactive' : ''}`} key={task.id}><span><b>{task.name}</b><small>{task.pay_basis_display} rate · {currency(task.pay_rate)}{task.is_active ? '' : ' · Inactive'}</small></span><button type="button" className="catalog-button catalog-button-light" disabled={saving} onClick={() => editTask(task)}>Edit</button><button type="button" className="catalog-button catalog-button-light" disabled={saving} onClick={() => void setTaskActive(task, !task.is_active)}>{task.is_active ? 'Deactivate' : 'Activate'}</button></div>)}{!tasks.length && <p className="staff-history-empty">Add a task and its salary rate to assign task-based pay.</p>}</div>
       </div>
       <div className="staff-task-assignments">
         <div className="staff-task-assignment-heading"><span><strong>Worker task assignments</strong><small>{new Date(`${date}T00:00:00`).toLocaleDateString('en-UG', { weekday: 'long', day: 'numeric', month: 'long' })}</small></span><button type="button" className="catalog-button catalog-button-light" onClick={addAssignment} disabled={!recordsLoaded || locked || date > today || !hasAvailableAssignment}><Plus size={13}/>Assign task</button></div>
