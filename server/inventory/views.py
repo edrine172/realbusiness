@@ -899,6 +899,7 @@ class StaffAttendanceViewSet(viewsets.ViewSet):
             )
             record_permanent_task_entries(worker, attendance_date, attended, request.user)
             attendance.refresh_from_db(fields=['daily_wage'])
+            attendance.worker = worker
             saved_records.append(attendance)
 
         SecurityAuditEvent.objects.create(

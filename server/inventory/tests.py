@@ -669,6 +669,34 @@ class StaffPayrollTests(APITestCase):
         self.assertTrue(record.attended)
         self.assertEqual(record.daily_wage, Decimal('0.00'))
 
+    def test_attendance_response_reuses_validated_workers(self):
+        workers = [
+            self.create_worker(full_name=f'Attendance Worker {index}').data
+            for index in range(2)
+        ]
+        with CaptureQueriesContext(connection) as queries:
+            response = self.client.post('/api/staff/attendance/record_day/', {
+                'date': '2025-02-03',
+                'records': [
+                    {'worker': worker['id'], 'attended': True, 'output_quantity': 0}
+                    for worker in workers
+                ],
+            }, format='json')
+
+        self.assertEqual(response.status_code, 200)
+        worker_lookups = [
+            query for query in queries.captured_queries
+            if 'from "inventory_staffmember" where "inventory_staffmember"."id" =' in query['sql'].lower()
+        ]
+        self.assertEqual(
+            len(worker_lookups),
+            len(workers),
+        )
+        self.assertEqual(
+            [record['worker_name'] for record in response.data],
+            [worker['full_name'] for worker in workers],
+        )
+
 
 class SystemSettingsTests(APITestCase):
     def setUp(self):
