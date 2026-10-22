@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowRight, Banknote, BriefcaseBusiness, CalendarDays, Check, ChevronDown,
-  CircleAlert, Clock3, FileText, Filter, LogOut, Plus, RefreshCw,
+  CircleAlert, Clock3, Eye, EyeOff, FileText, Filter, LogOut, Plus, RefreshCw,
   Search, ShieldCheck, Users, Wallet, X,
 } from 'lucide-react';
 import {
@@ -13,7 +13,6 @@ import { useConfirmation } from './ConfirmDialog';
 
 type DashboardTarget = 'overview' | 'products' | 'inventory' | 'purchases' | 'pos' | 'sales' | 'reports' | 'customers' | 'suppliers' | 'expenses' | 'users' | 'settings';
 type StaffFormValues = Omit<StaffMemberInput, 'hire_date'> & { hire_date: string };
-type PendingStaffTaskEntry = { date: string; worker: number; task: number; hours: string; units_worked: number };
 
 const periodLabel = (period: string) => new Date(`${period}-01T00:00:00`).toLocaleDateString('en-UG', { month: 'long', year: 'numeric' });
 const thisPeriod = () => { const now = new Date(); return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`; };
@@ -31,12 +30,15 @@ const dailyAttendanceTier = (outputQuantity: string | number) => {
   const units = Number(outputQuantity);
   return units >= 15 ? '15+ units' : units >= 12 ? '12–14 units' : units >= 8 ? '8–11 units' : 'Below 8 units';
 };
+const targetTierPayout = (unitsWorked: number, tiers: StaffTaskTargetTier[]) =>
+  tiers.filter((tier) => unitsWorked >= tier.target_quantity)
+    .sort((first, second) => second.target_quantity - first.target_quantity)[0]?.amount ?? '0';
 const targetTierDescription = (tiers: StaffTaskTargetTier[]) =>
   tiers.map((tier) => `${tier.target_quantity} units: ${currency(tier.amount)}`).join(' · ');
 const taskEntryPay = (entry: StaffTaskEntry, entries: StaffTaskEntry[]) => {
   if (entry.pay_basis === 'daily') return Number(entry.pay_rate);
   if (entry.pay_basis === 'hourly') return Number(entry.pay_rate) * Number(entry.hours);
-  if (entry.pay_basis === 'target') return Number(entry.pay_rate);
+  if (entry.pay_basis === 'target') return Number(targetTierPayout(entry.units_worked, entry.target_tiers));
   const alreadyCounted = entries.some((candidate) =>
     candidate.worker === entry.worker
     && candidate.task === entry.task
@@ -111,9 +113,9 @@ function DailyAttendancePanel({ period, workers, locked, selectedWorkerId, month
   const [taskRefreshToken, setTaskRefreshToken] = useState(0);
   const [drafts, setDrafts] = useState<Record<number, { attended: boolean; output_quantity: string; daily_wage_override: string }>>({});
   const [taskDrafts, setTaskDrafts] = useState<Record<number, { task: string; hours: string; units_worked: string }>>({});
-  const [pendingTaskEntries, setPendingTaskEntries] = useState<PendingStaffTaskEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [savingTaskWorkerId, setSavingTaskWorkerId] = useState<number | null>(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [year, month] = period.split('-').map(Number);
@@ -156,13 +158,10 @@ function DailyAttendancePanel({ period, workers, locked, selectedWorkerId, month
   const taskAssignedWorkerIds = new Set(taskEntries
     .filter((entry) => entry.date === date)
     .map((entry) => entry.worker));
-  const pendingTaskWorkerIds = new Set(pendingTaskEntries
-    .filter((entry) => entry.date === date)
-    .map((entry) => entry.worker));
   const presentCount = attendanceWorkers.filter((worker) => drafts[worker.id]?.attended).length;
   const dailyTotal = dailyWageWorkers.reduce((total, worker) => {
     const draft = drafts[worker.id] ?? { attended: false, output_quantity: '', daily_wage_override: '' };
-    return total + (taskAssignedWorkerIds.has(worker.id) || pendingTaskWorkerIds.has(worker.id)
+    return total + (taskAssignedWorkerIds.has(worker.id)
       ? 0
       : dailyAttendanceWage(date, draft.attended, draft.output_quantity, worker.pay_basis, draft.daily_wage_override));
   }, 0);
@@ -218,21 +217,11 @@ function DailyAttendancePanel({ period, workers, locked, selectedWorkerId, month
       return draft?.attended && draft.output_quantity.trim() === '';
     });
     if (missingOutput) { setError('Enter actual units for each attended daily-paid worker.'); return; }
-    const unattendedPendingTask = pendingTaskEntries.some((entry) =>
-      entry.date === date && !drafts[entry.worker]?.attended);
-    if (unattendedPendingTask) {
-      setError('Mark every worker with a pending task assignment as attended before saving.');
-      return;
-    }
-    const datePendingEntries = pendingTaskEntries.filter((entry) => entry.date === date);
     setSaving(true);
     setError('');
     setNotice('');
-    let attendanceSaved = false;
-    let savedAttendanceRecords: StaffAttendance[] | null = null;
-    let taskAssignmentsSaved = datePendingEntries.length === 0;
     try {
-      savedAttendanceRecords = await api.recordStaffAttendance(date, attendanceWorkers.map((worker) => {
+      const savedRecords = await api.recordStaffAttendance(date, attendanceWorkers.map((worker) => {
         const draft = drafts[worker.id] ?? { attended: false, output_quantity: '', daily_wage_override: '' };
         const outputQuantity = draft.attended && worker.pay_basis === 'daily' ? Number(draft.output_quantity) || 0 : 0;
         return {
@@ -244,56 +233,17 @@ function DailyAttendancePanel({ period, workers, locked, selectedWorkerId, month
             : null,
         };
       }));
-      attendanceSaved = true;
-      if (datePendingEntries.length) {
-        const existingEntries = (await api.staffTaskEntries(period)).filter((entry) => entry.date === date);
-        const duplicateAssignment = datePendingEntries.find((pending) =>
-          existingEntries.some((entry) => entry.worker === pending.worker && entry.task === pending.task));
-        if (duplicateAssignment) {
-          const worker = workers.find((item) => item.id === duplicateAssignment.worker);
-          const task = availableTasks.find((item) => item.id === duplicateAssignment.task);
-          throw new Error(`${worker?.full_name ?? 'This worker'} is already assigned to ${task?.name ?? 'this task'} on this date.`);
-        }
-        const savedEntries = await api.recordStaffTaskEntries(date, [
-          ...existingEntries.map((entry) => ({
-            worker: entry.worker,
-            task: entry.task,
-            hours: entry.hours,
-            units_worked: entry.units_worked,
-          })),
-          ...datePendingEntries.map(({ worker, task, hours, units_worked }) => ({
-            worker,
-            task,
-            hours,
-            units_worked,
-          })),
-        ]);
-        setTaskEntries((current) => [...current.filter((entry) => entry.date !== date), ...savedEntries]);
-        setPendingTaskEntries((current) => current.filter((entry) => entry.date !== date));
-        setTaskRefreshToken((current) => current + 1);
-        taskAssignmentsSaved = true;
-      }
-      setAttendanceRecords((current) => [...current.filter((record) => record.date !== date), ...(savedAttendanceRecords ?? [])]);
+      setAttendanceRecords((current) => [...current.filter((record) => record.date !== date), ...savedRecords]);
       await onSaved();
-      setNotice(`Attendance${pendingTaskEntries.some((entry) => entry.date === date) ? ' and task assignments' : ''} saved for ${new Date(`${date}T00:00:00`).toLocaleDateString('en-UG', { day: 'numeric', month: 'long' })}.`);
-    } catch (cause) {
-      const message = cause instanceof Error ? cause.message : 'The request failed.';
-      const savedRecords = savedAttendanceRecords;
-      if (savedRecords) {
-        setAttendanceRecords((current) => [...current.filter((record) => record.date !== date), ...savedRecords]);
-      }
-      setError(!attendanceSaved
-        ? `Attendance could not be saved. ${message}`
-        : !taskAssignmentsSaved
-          ? `Attendance was saved, but task assignments could not be saved. ${message}`
-          : `Attendance${datePendingEntries.length ? ' and task assignments were' : ' was'} saved, but the dashboard could not be refreshed. ${message}`);
-    }
+      setNotice(`Attendance saved for ${new Date(`${date}T00:00:00`).toLocaleDateString('en-UG', { day: 'numeric', month: 'long' })}.`);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Attendance could not be saved.'); }
     finally { setSaving(false); }
   }
 
-  function assignTaskToWorker(worker: StaffMember) {
+  async function assignTaskToWorker(worker: StaffMember) {
+    const attendance = attendanceRecords.find((record) => record.worker === worker.id && record.date === date && record.attended);
     const attendanceDraft = drafts[worker.id] ?? { attended: false, output_quantity: '', daily_wage_override: '' };
-    const assignment = taskDrafts[worker.id] ?? { task: '', hours: '', units_worked: '' };
+    const assignment = taskDrafts[worker.id];
     const task = activeTasks.find((item) => item.id === Number(assignment?.task));
     if (!attendanceDraft.attended || !task) {
       setError('Mark the worker as attended before assigning a task.');
@@ -311,22 +261,60 @@ function DailyAttendancePanel({ period, workers, locked, selectedWorkerId, month
       setError('Enter the number of units completed for this target-based task.');
       return;
     }
-    if (taskEntries.some((entry) => entry.date === date && entry.worker === worker.id && entry.task === task.id)
-      || pendingTaskEntries.some((entry) => entry.date === date && entry.worker === worker.id && entry.task === task.id)) {
+    if (taskEntries.some((entry) => entry.date === date && entry.worker === worker.id && entry.task === task.id)) {
       setError(`${worker.full_name} is already assigned to ${task.name} on this date.`);
       return;
     }
+    setSavingTaskWorkerId(worker.id);
     setError('');
     setNotice('');
-    setPendingTaskEntries((current) => [...current, {
-      date,
-      worker: worker.id,
-      task: task.id,
-      hours: task.pay_basis === 'hourly' ? assignment.hours : '0',
-      units_worked: task.pay_basis === 'target' ? Number(assignment.units_worked) : 0,
-    }]);
-    setTaskDrafts((current) => ({ ...current, [worker.id]: { task: '', hours: '', units_worked: '' } }));
-    setNotice(`${task.name} added for ${worker.full_name}. Save attendance to confirm both.`);
+    try {
+      if (!attendance) {
+        const outputQuantity = worker.pay_basis === 'daily' ? Number(attendanceDraft.output_quantity) || 0 : 0;
+        const savedAttendance = await api.recordStaffAttendance(date, [{
+          worker: worker.id,
+          attended: true,
+          output_quantity: outputQuantity,
+          daily_wage_override: worker.pay_basis === 'daily'
+            && outputQuantity < 8
+            && attendanceDraft.daily_wage_override.trim()
+            ? Number(attendanceDraft.daily_wage_override)
+            : null,
+        }]);
+        setAttendanceRecords((current) => [
+          ...current.filter((record) => record.date !== date || record.worker !== worker.id),
+          ...savedAttendance,
+        ]);
+      }
+      const existingEntries = (await api.staffTaskEntries(period)).filter((entry) => entry.date === date);
+      if (existingEntries.some((entry) => entry.worker === worker.id && entry.task === task.id)) {
+        setError(`${worker.full_name} is already assigned to ${task.name} on this date.`);
+        return;
+      }
+      const savedEntries = await api.recordStaffTaskEntries(date, [
+        ...existingEntries.map((entry) => ({
+          worker: entry.worker,
+          task: entry.task,
+          hours: entry.hours,
+          units_worked: entry.units_worked,
+        })),
+        {
+          worker: worker.id,
+          task: task.id,
+          hours: task.pay_basis === 'hourly' ? assignment.hours : '0',
+          units_worked: task.pay_basis === 'target' ? Number(assignment.units_worked) : 0,
+        },
+      ]);
+      setTaskEntries((current) => [...current.filter((entry) => entry.date !== date), ...savedEntries]);
+      setTaskRefreshToken((current) => current + 1);
+      setTaskDrafts((current) => ({ ...current, [worker.id]: { task: '', hours: '', units_worked: '' } }));
+      await onSaved();
+      setNotice(`${attendance ? '' : 'Attendance saved. '}${task.name} assigned to ${worker.full_name} for this date.`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Task could not be assigned to this worker.');
+    } finally {
+      setSavingTaskWorkerId(null);
+    }
   }
 
   return <>
@@ -382,54 +370,31 @@ function DailyAttendancePanel({ period, workers, locked, selectedWorkerId, month
       const draft = drafts[worker.id] ?? { attended: false, output_quantity: '', daily_wage_override: '' };
       const hasRecord = selectedDateRecords.some((record) => record.worker === worker.id);
       const workerTaskEntries = taskEntries.filter((entry) => entry.date === date && entry.worker === worker.id);
-      const workerPendingTaskEntries = pendingTaskEntries.filter((entry) => entry.date === date && entry.worker === worker.id);
-      const hasTaskAssignment = workerTaskEntries.length > 0 || workerPendingTaskEntries.length > 0;
-      const taskPay = workerTaskEntries.reduce((total, entry) => total + taskEntryPay(entry, taskEntries), 0)
-        + workerPendingTaskEntries.reduce((total, entry) => {
-          const task = activeTasks.find((item) => item.id === entry.task);
-          if (!task) return total;
-          if (task.pay_basis === 'daily') return total + Number(task.pay_rate);
-          if (task.pay_basis === 'hourly') return total + Number(task.pay_rate) * Number(entry.hours);
-          if (task.pay_basis === 'target') return total + Number(task.pay_rate);
-          const alreadyCounted = taskEntries.some((candidate) =>
-            candidate.worker === entry.worker && candidate.task === entry.task
-            && candidate.date.slice(0, 7) === entry.date.slice(0, 7) && candidate.date < entry.date)
-            || pendingTaskEntries.some((candidate) =>
-              candidate.worker === entry.worker && candidate.task === entry.task
-              && candidate.date.slice(0, 7) === entry.date.slice(0, 7) && candidate.date < entry.date);
-          return total + (alreadyCounted ? 0 : Number(task.pay_rate));
-        }, 0);
+      const hasTaskAssignment = workerTaskEntries.length > 0;
+      const taskPay = workerTaskEntries.reduce((total, entry) => total + taskEntryPay(entry, taskEntries), 0);
       const wage = hasTaskAssignment ? 0 : dailyAttendanceWage(date, draft.attended, draft.output_quantity, worker.pay_basis, draft.daily_wage_override);
       const needsSupervisorOverride = worker.pay_basis === 'daily' && draft.attended && Number(draft.output_quantity) < 8 && !hasTaskAssignment;
       const taskDraft = taskDrafts[worker.id] ?? { task: '', hours: '', units_worked: '' };
-      const assignedTaskIds = new Set([...workerTaskEntries.map((entry) => entry.task), ...workerPendingTaskEntries.map((entry) => entry.task)]);
+      const assignedTaskIds = new Set(workerTaskEntries.map((entry) => entry.task));
       const assignableTasks = activeTasks.filter((task) => !assignedTaskIds.has(task.id));
       const selectedTask = activeTasks.find((task) => task.id === Number(taskDraft.task));
       return <tr key={worker.id} className={selectedWorkerId === worker.id ? 'is-selected-worker' : ''}>
         <td><button type="button" className="staff-attendance-worker-link" aria-pressed={selectedWorkerId === worker.id} onClick={() => onSelectedWorkerChange(worker.id)}><strong>{worker.full_name}</strong><small>{worker.employee_number} · {worker.job_title}</small></button></td>
-        <td><label className="staff-attendance-check"><input type="checkbox" checked={draft.attended} disabled={locked || saving} onChange={(event) => updateDraft(worker, { attended: event.target.checked })}/><span>{hasRecord ? draft.attended ? 'Worked' : 'Did not work' : draft.attended ? 'Worked (unsaved)' : 'No entry'}</span></label></td>
-        <td>{worker.pay_basis === 'daily' ? <input className="staff-attendance-wage" type="number" min="0" step="1" aria-label={`${worker.full_name} actual units completed on ${date}`} value={draft.output_quantity} placeholder="Units completed" disabled={!draft.attended || locked || saving} onChange={(event) => updateDraft(worker, { output_quantity: event.target.value, daily_wage_override: Number(event.target.value) < 8 ? draft.daily_wage_override : '' })}/> : <span className="staff-attendance-not-applicable">Attendance only</span>}</td>
+        <td><label className="staff-attendance-check"><input type="checkbox" checked={draft.attended} disabled={locked} onChange={(event) => updateDraft(worker, { attended: event.target.checked })}/><span>{hasRecord ? draft.attended ? 'Worked' : 'Did not work' : draft.attended ? 'Worked (unsaved)' : 'No entry'}</span></label></td>
+        <td>{worker.pay_basis === 'daily' ? <input className="staff-attendance-wage" type="number" min="0" step="1" aria-label={`${worker.full_name} actual units completed on ${date}`} value={draft.output_quantity} placeholder="Units completed" disabled={!draft.attended || locked} onChange={(event) => updateDraft(worker, { output_quantity: event.target.value, daily_wage_override: Number(event.target.value) < 8 ? draft.daily_wage_override : '' })}/> : <span className="staff-attendance-not-applicable">Attendance only</span>}</td>
         <td>
           <div className="staff-inline-task">
-            <label className="catalog-field"><span>Task</span><select aria-label={`Task to assign to ${worker.full_name}`} value={taskDraft.task} disabled={locked || !draft.attended || saving || !assignableTasks.length} onChange={(event) => { const task = activeTasks.find((item) => item.id === Number(event.target.value)); setTaskDrafts((current) => ({ ...current, [worker.id]: { task: event.target.value, hours: task?.pay_basis === 'hourly' ? '1' : '0', units_worked: '' } })); }}><option value="">{!draft.attended ? 'Mark attended first' : !assignableTasks.length ? assignedTaskIds.size ? 'All tasks assigned' : 'No active tasks' : 'Choose task'}</option>{assignableTasks.map((task) => <option key={task.id} value={task.id}>{task.name} · {task.pay_basis_display}{task.pay_basis === 'target' ? ` · flat ${currency(task.pay_rate)}` : ` · ${currency(task.pay_rate)}`}</option>)}</select></label>
-            {selectedTask?.pay_basis === 'hourly' && <label className="catalog-field"><span>Hours</span><input type="number" min="0.01" step="0.25" aria-label={`Hours for ${selectedTask.name} assigned to ${worker.full_name}`} value={taskDraft.hours} disabled={locked || saving} onChange={(event) => setTaskDrafts((current) => ({ ...current, [worker.id]: { ...taskDraft, hours: event.target.value } }))}/></label>}
-            {selectedTask?.pay_basis === 'target' && <label className="catalog-field"><span>Units completed (tracking only)</span><input type="number" min="0" step="1" required aria-label={`Units completed for ${selectedTask.name} assigned to ${worker.full_name} (tracking only)`} value={taskDraft.units_worked} disabled={locked || saving} onChange={(event) => setTaskDrafts((current) => ({ ...current, [worker.id]: { ...taskDraft, units_worked: event.target.value } }))}/></label>}
-            <button type="button" className="catalog-button catalog-button-light" disabled={locked || saving || !draft.attended || !selectedTask} onClick={() => assignTaskToWorker(worker)}>Add task</button>
+            <label className="catalog-field"><span>Task</span><select aria-label={`Task to assign to ${worker.full_name}`} value={taskDraft.task} disabled={locked || !draft.attended || savingTaskWorkerId === worker.id || !assignableTasks.length} onChange={(event) => { const task = activeTasks.find((item) => item.id === Number(event.target.value)); setTaskDrafts((current) => ({ ...current, [worker.id]: { task: event.target.value, hours: task?.pay_basis === 'hourly' ? '1' : '0', units_worked: '' } })); }}><option value="">{!draft.attended ? 'Mark attended first' : !assignableTasks.length ? assignedTaskIds.size ? 'All tasks assigned' : 'No active tasks' : 'Choose task'}</option>{assignableTasks.map((task) => <option key={task.id} value={task.id}>{task.name} · {task.pay_basis_display}{task.pay_basis === 'target' ? `: ${targetTierDescription(task.target_tiers)}` : ` · ${currency(task.pay_rate)}`}</option>)}</select></label>
+            {selectedTask?.pay_basis === 'hourly' && <label className="catalog-field"><span>Hours</span><input type="number" min="0.01" step="0.25" aria-label={`Hours for ${selectedTask.name} assigned to ${worker.full_name}`} value={taskDraft.hours} disabled={locked || savingTaskWorkerId === worker.id} onChange={(event) => setTaskDrafts((current) => ({ ...current, [worker.id]: { ...taskDraft, hours: event.target.value } }))}/></label>}
+            {selectedTask?.pay_basis === 'target' && <label className="catalog-field"><span>Units completed ({targetTierDescription(selectedTask.target_tiers)})</span><input type="number" min="0" step="1" required aria-label={`Units completed for ${selectedTask.name} assigned to ${worker.full_name}`} value={taskDraft.units_worked} disabled={locked || savingTaskWorkerId === worker.id} onChange={(event) => setTaskDrafts((current) => ({ ...current, [worker.id]: { ...taskDraft, units_worked: event.target.value } }))}/></label>}
+            <button type="button" className="catalog-button catalog-button-light" disabled={locked || !draft.attended || !selectedTask || savingTaskWorkerId === worker.id} onClick={() => void assignTaskToWorker(worker)}>{savingTaskWorkerId === worker.id ? 'Assigning…' : 'Assign'}</button>
           </div>
           {workerTaskEntries.map((entry) => <small className="staff-inline-task-assigned" key={entry.id}>{entry.task_name} assigned</small>)}
-          {workerPendingTaskEntries.map((entry) => {
-            const task = activeTasks.find((item) => item.id === entry.task);
-            if (!task) return null;
-            return <span className="staff-inline-task-pending" key={`${entry.date}-${entry.worker}-${entry.task}`}>
-              {task.name} pending save
-              <button type="button" disabled={saving} aria-label={`Remove pending ${task.name} assignment for ${worker.full_name}`} onClick={() => setPendingTaskEntries((current) => current.filter((candidate) => candidate !== entry))}><X size={11}/></button>
-            </span>;
-          })}
         </td>
-        <td>{worker.pay_basis === 'daily' ? <span className="staff-attendance-calculated-wage"><strong>{currency(hasTaskAssignment ? taskPay : wage)}</strong><small>{hasTaskAssignment ? workerPendingTaskEntries.length ? 'Includes pending task pay' : 'Assigned task pay only' : dailyAttendanceTier(draft.output_quantity)}</small></span> : <span className="staff-attendance-not-applicable">—</span>}{needsSupervisorOverride && <label className="staff-attendance-override">Supervisor override (UGX)<input type="number" min="0" step="0.01" aria-label={`${worker.full_name} supervisor wage override for ${date}`} placeholder="0 = no override" value={draft.daily_wage_override} disabled={locked || saving} onChange={(event) => updateDraft(worker, { daily_wage_override: event.target.value })}/></label>}</td>
+        <td>{worker.pay_basis === 'daily' ? <span className="staff-attendance-calculated-wage"><strong>{currency(hasTaskAssignment ? taskPay : wage)}</strong><small>{hasTaskAssignment ? 'Assigned task pay only' : dailyAttendanceTier(draft.output_quantity)}</small></span> : <span className="staff-attendance-not-applicable">—</span>}{needsSupervisorOverride && <label className="staff-attendance-override">Supervisor override (UGX)<input type="number" min="0" step="0.01" aria-label={`${worker.full_name} supervisor wage override for ${date}`} placeholder="0 = no override" value={draft.daily_wage_override} disabled={locked} onChange={(event) => updateDraft(worker, { daily_wage_override: event.target.value })}/></label>}</td>
       </tr>;
     })}</tbody></table></div> : attendanceWorkers.length ? <div className="staff-history-empty">No workers match “{workerSearch}”.</div> : <div className="staff-history-empty">Add an active worker to record attendance.</div>}
-    <div className="staff-attendance-footer"><span>{locked ? 'Attendance is locked because payroll has been generated for this month.' : pendingTaskWorkerIds.size ? `${pendingTaskEntries.filter((entry) => entry.date === date).length} task assignment${pendingTaskEntries.filter((entry) => entry.date === date).length === 1 ? '' : 's'} will save with attendance. Daily-paid workers’ attendance wages are totaled into payroll.` : 'Daily-paid workers’ attendance wages are totaled into payroll.'}</span><button className="catalog-button catalog-button-primary" onClick={() => void saveAttendance()} disabled={!attendanceWorkers.length || loading || saving || locked || date > today}>{saving ? 'Saving…' : pendingTaskWorkerIds.size ? 'Save attendance & tasks' : 'Save attendance'}</button></div>
+    <div className="staff-attendance-footer"><span>{locked ? 'Attendance is locked because payroll has been generated for this month.' : 'Daily-paid workers’ attendance wages are totaled into payroll.'}</span><button className="catalog-button catalog-button-primary" onClick={() => void saveAttendance()} disabled={!attendanceWorkers.length || loading || saving || locked || date > today}>{saving ? 'Saving…' : 'Save attendance'}</button></div>
   </section>
   <TaskPayPanel period={period} date={date} workers={workers} attendanceRecords={attendanceRecords} locked={locked} refreshToken={taskRefreshToken} onSaved={onSaved} onEntriesChange={setTaskEntries} onTasksChange={setAvailableTasks}/>
   </>;
@@ -480,7 +445,7 @@ function TaskPayPanel({ period, date, workers, attendanceRecords, locked, refres
   const selectedMonthTaskPay = monthEntries.reduce((total, entry) => {
     if (entry.pay_basis === 'daily') return total + Number(entry.pay_rate);
     if (entry.pay_basis === 'hourly') return total + Number(entry.pay_rate) * Number(entry.hours);
-    if (entry.pay_basis === 'target') return total + Number(entry.pay_rate);
+    if (entry.pay_basis === 'target') return total + Number(targetTierPayout(entry.units_worked, entry.target_tiers));
     return total;
   }, 0) + [...monthlyTaskRates.values()].reduce((total, rate) => total + rate, 0);
   const activeTasks = tasks.filter((task) => task.is_active);
@@ -723,7 +688,7 @@ function TaskPayPanel({ period, date, workers, attendanceRecords, locked, refres
   }
 
   return <section className="staff-task-pay-panel">
-    <div className="staff-section-heading"><div><span className="staff-section-icon"><BriefcaseBusiness size={14}/></span><div><h2>Task-based pay</h2><p>Target-based tasks pay the full configured amount whenever assigned, regardless of units completed. Daily and hourly task rates apply as recorded; monthly rates count once per worker/task each month.</p></div></div></div>
+    <div className="staff-section-heading"><div><span className="staff-section-icon"><BriefcaseBusiness size={14}/></span><div><h2>Task-based pay</h2><p>Target-based tasks pay the amount for the highest target tier reached. Daily and hourly task rates apply as recorded; monthly rates count once per worker/task each month.</p></div></div></div>
     <div className="staff-task-pay-layout">
       <div>
         <form className="staff-task-form" onSubmit={(event) => void saveTask(event)}>
@@ -738,7 +703,7 @@ function TaskPayPanel({ period, date, workers, attendanceRecords, locked, refres
           }}><option value="daily">Daily</option><option value="hourly">Hourly</option><option value="monthly">Monthly</option><option value="target">Target-based</option></select></label>
           {taskBasis === 'target' ? <div className="staff-task-target-tiers">
             <strong>Target and payout tiers</strong>
-            <small>The highest payout entered is paid for each task assignment regardless of units completed. Units are recorded for tracking only.</small>
+            <small>The payout for the highest target reached is paid once per day; tiers do not stack.</small>
             {taskTargetTiers.map((tier, index) => <div className="staff-task-rate-fields" key={`target-tier-${index}`}>
               <label className="catalog-field">Target units<input required type="number" min="1" step="1" value={tier.target_quantity} onChange={(event) => updateTargetTier(index, { target_quantity: event.target.value })} placeholder="Units"/></label>
               <label className="catalog-field">Payout (UGX)<input required type="number" min="0.01" step="0.01" value={tier.amount} onChange={(event) => updateTargetTier(index, { amount: event.target.value })} placeholder="Amount"/></label>
@@ -748,7 +713,7 @@ function TaskPayPanel({ period, date, workers, attendanceRecords, locked, refres
           </div> : <label className="catalog-field">Pay rate (UGX)<input required type="number" min="0.01" step="0.01" value={taskRate} onChange={(event) => setTaskRate(event.target.value)} placeholder="Enter amount"/></label>}
           <div className="staff-task-form-actions"><button className="catalog-button catalog-button-primary" disabled={saving}>{saving ? 'Saving…' : editingTaskId ? 'Update task' : 'Add task'}</button>{editingTaskId && <button type="button" className="catalog-button catalog-button-light" onClick={resetTaskForm}>Cancel</button>}</div>
         </form>
-        <div className="staff-task-list"><strong>Available tasks</strong>{tasks.map((task) => <div className={`staff-task-list-row ${!task.is_active ? 'is-inactive' : ''}`} key={task.id}><span><b>{task.name}</b><small>{task.pay_basis_display} · {task.pay_basis === 'target' ? `flat ${currency(task.pay_rate)} (units do not affect pay)` : currency(task.pay_rate)}{task.is_active ? '' : ' · Inactive'}</small></span><button type="button" className="catalog-button catalog-button-light" disabled={saving} onClick={() => editTask(task)}>Edit</button><button type="button" className="catalog-button catalog-button-light" disabled={saving} onClick={() => void setTaskActive(task, !task.is_active)}>{task.is_active ? 'Deactivate' : 'Activate'}</button></div>)}{!tasks.length && <p className="staff-history-empty">Add a task and its pay details to assign task-based pay.</p>}</div>
+        <div className="staff-task-list"><strong>Available tasks</strong>{tasks.map((task) => <div className={`staff-task-list-row ${!task.is_active ? 'is-inactive' : ''}`} key={task.id}><span><b>{task.name}</b><small>{task.pay_basis_display} · {task.pay_basis === 'target' ? targetTierDescription(task.target_tiers) : currency(task.pay_rate)}{task.is_active ? '' : ' · Inactive'}</small></span><button type="button" className="catalog-button catalog-button-light" disabled={saving} onClick={() => editTask(task)}>Edit</button><button type="button" className="catalog-button catalog-button-light" disabled={saving} onClick={() => void setTaskActive(task, !task.is_active)}>{task.is_active ? 'Deactivate' : 'Activate'}</button></div>)}{!tasks.length && <p className="staff-history-empty">Add a task and its pay details to assign task-based pay.</p>}</div>
       </div>
       <div className="staff-task-assignments">
         <div className="staff-task-assignment-heading"><span><strong>Worker task assignments</strong><small>{new Date(`${date}T00:00:00`).toLocaleDateString('en-UG', { weekday: 'long', day: 'numeric', month: 'long' })}</small></span><button type="button" className="catalog-button catalog-button-light" onClick={addAssignment} disabled={!recordsLoaded || locked || date > today || !hasAvailableAssignment}><Plus size={13}/>Assign task</button></div>
@@ -764,7 +729,7 @@ function TaskPayPanel({ period, date, workers, attendanceRecords, locked, refres
             <label className="catalog-field">Task<select value={selectedPermanentTask} onChange={(event) => setPermanentTask(event.target.value)}><option value="">Choose task</option>{activeTasks.map((task) => <option key={task.id} value={task.id}>{task.name} · {task.pay_basis === 'target' ? targetTierDescription(task.target_tiers) : task.pay_basis_display}</option>)}</select></label>
             <button type="button" className="catalog-button catalog-button-light" onClick={() => void assignPermanentTask()} disabled={saving || locked || loading || !activeWorkers.length || !activeTasks.length}><Plus size={13}/>Assign</button>
           </div>
-          <div className="staff-permanent-task-list">{permanentAssignments.map((assignment) => <div key={assignment.id}><span><strong>{assignment.worker_name}</strong><small>{assignment.task_name} · {assignment.pay_basis_display}{assignment.pay_basis === 'target' ? ` · flat ${currency(assignment.pay_rate)}` : ` · ${currency(assignment.pay_rate)}`}</small></span><button type="button" className="catalog-button catalog-button-light" disabled={saving || locked} onClick={() => void deactivatePermanentAssignment(assignment)}>Unassign</button></div>)}{!permanentAssignments.length && <small>No permanent task assignments yet.</small>}</div>
+          <div className="staff-permanent-task-list">{permanentAssignments.map((assignment) => <div key={assignment.id}><span><strong>{assignment.worker_name}</strong><small>{assignment.task_name} · {assignment.pay_basis_display}{assignment.pay_basis === 'target' ? ` · ${targetTierDescription(assignment.target_tiers)}` : ` · ${currency(assignment.pay_rate)}`}</small></span><button type="button" className="catalog-button catalog-button-light" disabled={saving || locked} onClick={() => void deactivatePermanentAssignment(assignment)}>Unassign</button></div>)}{!permanentAssignments.length && <small>No permanent task assignments yet.</small>}</div>
         </div>
         {!eligibleWorkers.length && !loading && <p className="staff-history-empty">Mark a worker attended for this day before assigning additional daily tasks.</p>}
         {loading ? <p className="staff-history-empty">Loading task pay records…</p> : drafts.length ? <div className="staff-task-assignment-list">{drafts.map((row, index) => {
@@ -776,18 +741,20 @@ function TaskPayPanel({ period, date, workers, attendanceRecords, locked, refres
           const rowBasis = entry?.pay_basis ?? selectedTask?.pay_basis;
           const rowRate = Number(entry?.pay_rate ?? selectedTask?.pay_rate ?? 0);
           const rowHours = Number(row.hours || 0);
+          const rowTiers = entry?.target_tiers ?? selectedTask?.target_tiers ?? [];
+          const rowPayout = Number(targetTierPayout(Number(row.units_worked), rowTiers));
           const rowAmount = rowBasis === 'daily' ? rowRate
             : rowBasis === 'hourly' ? rowRate * rowHours
-              : rowBasis === 'target' ? rowRate
+              : rowBasis === 'target' ? rowPayout
                 : monthlySeenEarlier ? 0 : rowRate;
           return <div className="staff-task-assignment-row" key={`${row.worker}-${row.task}-${index}`}>
             <label className="catalog-field">Worker<select disabled={locked || permanentEntry} value={row.worker} onChange={(event) => updateAssignment(index, { worker: event.target.value })}>{eligibleWorkers.map((worker) => <option key={worker.id} value={worker.id}>{worker.full_name}</option>)}</select></label>
-            <label className="catalog-field">Task<select disabled={locked || permanentEntry} value={row.task} onChange={(event) => updateAssignment(index, { task: event.target.value })}>{tasks.filter((task) => task.is_active || task.id === Number(row.task)).map((task) => <option key={task.id} value={task.id} disabled={!task.is_active}>{task.name} · {task.pay_basis_display}{task.pay_basis === 'target' ? ` · flat ${currency(task.pay_rate)}` : ''}</option>)}</select></label>
+            <label className="catalog-field">Task<select disabled={locked || permanentEntry} value={row.task} onChange={(event) => updateAssignment(index, { task: event.target.value })}>{tasks.filter((task) => task.is_active || task.id === Number(row.task)).map((task) => <option key={task.id} value={task.id} disabled={!task.is_active}>{task.name} · {task.pay_basis_display}{task.pay_basis === 'target' ? ` · ${targetTierDescription(task.target_tiers)}` : ''}</option>)}</select></label>
             {rowBasis === 'hourly' ? <label className="catalog-field">Hours<input type="number" min="0.01" step="0.25" disabled={locked} value={row.hours} onChange={(event) => updateAssignment(index, { hours: event.target.value })}/></label>
-              : rowBasis === 'target' ? <label className="catalog-field">Units completed (tracking only)<input type="number" min="0" step="1" required disabled={locked} value={row.units_worked} onChange={(event) => updateAssignment(index, { units_worked: event.target.value })}/></label>
+              : rowBasis === 'target' ? <label className="catalog-field">Units completed ({targetTierDescription(rowTiers)})<input type="number" min="0" step="1" required disabled={locked} value={row.units_worked} onChange={(event) => updateAssignment(index, { units_worked: event.target.value })}/></label>
                 : <span className="staff-task-assignment-rate"><small>{rowBasis === 'monthly' ? `Monthly amount${monthlySeenEarlier ? ' · already counted this month' : ''}` : 'Amount for this day'}</small><strong>{currency(rowAmount)}</strong></span>}
             {rowBasis === 'hourly' && <span className="staff-task-assignment-rate"><small>Amount for these hours</small><strong>{currency(rowAmount)}</strong></span>}
-            {rowBasis === 'target' && <span className="staff-task-assignment-rate"><small>Full task amount · targets do not change pay</small><strong>{currency(rowAmount)}</strong></span>}
+            {rowBasis === 'target' && <span className="staff-task-assignment-rate"><small>{rowPayout > 0 ? 'Highest target reached · payout' : 'Target not reached'}</small><strong>{currency(rowAmount)}</strong></span>}
             <button type="button" className="catalog-icon-button" aria-label={permanentEntry ? 'Permanent assignment' : 'Remove task assignment'} title={permanentEntry ? 'Change the permanent assignment above to remove it' : 'Remove task assignment'} disabled={locked || permanentEntry} onClick={() => setDrafts((current) => current.filter((_, rowIndex) => rowIndex !== index))}>{permanentEntry ? <Check size={14}/> : <X size={14}/>}</button>
           </div>;
         })}</div> : <p className="staff-history-empty">No task assignments recorded for this date.</p>}
@@ -822,6 +789,7 @@ export default function StaffDashboard({ onNavigate, onSignOut }: { onNavigate: 
   const [admin, setAdmin] = useState<AccessUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [savingRun, setSavingRun] = useState(false);
+  const [showWorkerRates, setShowWorkerRates] = useState(false);
   const [period, setPeriod] = useState(thisPeriod);
   const [search, setSearch] = useState('');
   const [departmentFilter, setDepartmentFilter] = useState('all');
@@ -953,7 +921,7 @@ export default function StaffDashboard({ onNavigate, onSignOut }: { onNavigate: 
       <section className="staff-ledger-panel">
         <div className="staff-ledger-toolbar"><label className="catalog-search"><Search size={14}/><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search name, ID, role, email"/></label><label className="catalog-select"><Filter size={12}/><select value={departmentFilter} onChange={(event) => setDepartmentFilter(event.target.value)}><option value="all">All departments</option>{dashboard.departments.map((department) => <option key={department.name} value={department.name}>{department.name}</option>)}</select><ChevronDown size={11}/></label><label className="catalog-select"><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="all">All statuses</option><option value="active">Active</option><option value="leave">On leave</option><option value="inactive">Inactive</option></select><ChevronDown size={11}/></label></div>
         <div className="staff-ledger-actions"><span><Users size={13}/>{workers.length} workers shown</span><button className="catalog-button catalog-button-light" onClick={() => setWorkerForm(null)}><Plus size={13}/>Add worker</button><button className="catalog-button catalog-button-primary" onClick={() => void generatePayroll()} disabled={savingRun || Boolean(currentRun)}><BriefcaseBusiness size={13}/>{savingRun ? 'Generating…' : currentRun ? 'Payroll generated' : 'Generate payroll'}</button></div>
-        <div className="catalog-table-scroll staff-table-scroll"><table className="catalog-table staff-table"><thead><tr><th>NAME</th><th>ROLE</th><th>DAYS</th><th>RATE ({getCurrencyDisplay().currency})</th><th>TASK PAY</th><th>PAID</th><th>UNPAID DAYS</th><th>DUE</th><th>ACTION</th></tr></thead><tbody>{workers.map((worker) => {
+        <div className="catalog-table-scroll staff-table-scroll"><table className="catalog-table staff-table"><thead><tr><th>NAME</th><th>ROLE</th><th>DAYS</th><th>RATE ({getCurrencyDisplay().currency}) <button type="button" className="catalog-icon-button staff-rate-visibility" aria-label={showWorkerRates ? 'Hide worker rates' : 'Show worker rates'} aria-pressed={showWorkerRates} title={showWorkerRates ? 'Hide worker rates' : 'Show worker rates'} onClick={() => setShowWorkerRates((visible) => !visible)}>{showWorkerRates ? <EyeOff size={12}/> : <Eye size={12}/>}</button></th><th>TASK PAY</th><th>PAID</th><th>UNPAID DAYS</th><th>DUE</th><th>ACTION</th></tr></thead><tbody>{workers.map((worker) => {
           const payrollLine = currentRun?.lines.find((line) => line.worker === worker.id);
           const taskPay = Number(payrollLine?.task_pay ?? worker.period_task_pay);
           const baseGross = worker.pay_basis === 'monthly' ? Number(worker.pay_rate) : worker.pay_basis === 'hourly' ? Number(worker.pay_rate) * Number(worker.hours_per_period) : Number(worker.period_gross);
@@ -967,7 +935,7 @@ export default function StaffDashboard({ onNavigate, onSignOut }: { onNavigate: 
             <td><button type="button" className={`staff-ledger-value staff-ledger-identity staff-roster-worker-link ${selectedWorkerId === worker.id ? 'is-selected' : ''}`} aria-pressed={selectedWorkerId === worker.id} onClick={() => { setSelectedWorkerId(worker.id); attendancePanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}><strong>{worker.full_name}</strong><small>{worker.employee_number}</small></button></td>
             <td><span className="staff-ledger-value staff-ledger-identity"><strong>{worker.job_title}</strong><small>{worker.department}</small></span></td>
             <td><span className="staff-ledger-value">{worker.period_days_worked || '—'}</span></td>
-            <td><span className="staff-ledger-value staff-ledger-money"><strong>{worker.pay_basis === 'daily' ? `Weekday (15+/12+/8+): ${currency(7000)} / ${currency(6000)} / ${currency(5000)}` : currency(worker.pay_rate)}</strong><small>{worker.pay_basis === 'daily' ? `Sunday (15+/12+/8+): ${currency(7000)} / ${currency(6000)} / ${currency(4000)}` : worker.pay_basis_display}</small></span></td>
+            <td><span className="staff-ledger-value staff-ledger-money"><strong>{showWorkerRates ? worker.pay_basis === 'daily' ? `Weekday (15+/12+/8+): ${currency(7000)} / ${currency(6000)} / ${currency(5000)}` : currency(worker.pay_rate) : '••••••'}</strong><small>{showWorkerRates && worker.pay_basis === 'daily' ? `Sunday (15+/12+/8+): ${currency(7000)} / ${currency(6000)} / ${currency(4000)}` : worker.pay_basis_display}</small></span></td>
             <td><span className="staff-ledger-value staff-ledger-money">{currency(taskPay)}</span></td>
             <td><span className="staff-ledger-value staff-ledger-money">{currency(paidAmount)}</span></td>
             <td><span className="staff-ledger-value" title="Scheduled and unpaid days are not tracked yet">—</span></td>
