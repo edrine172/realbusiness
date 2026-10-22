@@ -401,7 +401,7 @@ class StaffPayrollTests(APITestCase):
         self.assertEqual(duplicate.status_code, 400)
         self.assertFalse(StaffTaskEntry.objects.exists())
 
-    def test_target_task_pays_highest_reached_daily_target_tier(self):
+    def test_target_task_pays_full_amount_independent_of_units_worked(self):
         worker = self.create_worker()
         missing_target = self.client.post('/api/staff/tasks/', {
             'name': 'Pack cartons without target',
@@ -460,13 +460,13 @@ class StaffPayrollTests(APITestCase):
             self.assertEqual(recorded.data[0]['units_worked'], units)
 
         dashboard = self.client.get('/api/staff/dashboard/?period=2025-02').data
-        self.assertEqual(dashboard['workers'][0]['period_task_pay'], Decimal('3250.00'))
-        self.assertEqual(dashboard['summary']['gross_total'], Decimal('1003250.00'))
+        self.assertEqual(dashboard['workers'][0]['period_task_pay'], Decimal('6000.00'))
+        self.assertEqual(dashboard['summary']['gross_total'], Decimal('1006000.00'))
 
         payroll = self.client.post('/api/staff/payroll-runs/generate/', {'period': '2025-02'}, format='json')
         self.assertEqual(payroll.status_code, 201)
-        self.assertEqual(payroll.data['lines'][0]['task_pay'], '3250.00')
-        self.assertEqual(payroll.data['lines'][0]['gross_pay'], '1003250.00')
+        self.assertEqual(payroll.data['lines'][0]['task_pay'], '6000.00')
+        self.assertEqual(payroll.data['lines'][0]['gross_pay'], '1006000.00')
 
     def test_permanent_task_assignments_create_pay_entries_only_for_attended_days(self):
         worker = self.create_worker()

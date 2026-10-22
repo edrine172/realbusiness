@@ -71,12 +71,7 @@ def task_pay_totals(entries):
         elif entry.pay_basis == StaffTask.PayBasis.HOURLY:
             totals[entry.worker_id] = totals.get(entry.worker_id, Decimal('0')) + entry.pay_rate * entry.hours
         elif entry.pay_basis == StaffTask.PayBasis.TARGET:
-            earned = max(
-                (Decimal(str(tier['amount'])) for tier in entry.target_tiers
-                 if entry.units_worked >= tier['target_quantity']),
-                default=Decimal('0'),
-            )
-            totals[entry.worker_id] = totals.get(entry.worker_id, Decimal('0')) + earned
+            totals[entry.worker_id] = totals.get(entry.worker_id, Decimal('0')) + entry.pay_rate
         else:
             monthly_rates.setdefault((entry.worker_id, entry.task_id), entry.pay_rate)
     for (worker_id, _task_id), rate in monthly_rates.items():

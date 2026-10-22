@@ -31,15 +31,12 @@ const dailyAttendanceTier = (outputQuantity: string | number) => {
   const units = Number(outputQuantity);
   return units >= 15 ? '15+ units' : units >= 12 ? '12–14 units' : units >= 8 ? '8–11 units' : 'Below 8 units';
 };
-const targetTierPayout = (unitsWorked: number, tiers: StaffTaskTargetTier[]) =>
-  tiers.filter((tier) => unitsWorked >= tier.target_quantity)
-    .sort((first, second) => second.target_quantity - first.target_quantity)[0]?.amount ?? '0';
 const targetTierDescription = (tiers: StaffTaskTargetTier[]) =>
   tiers.map((tier) => `${tier.target_quantity} units: ${currency(tier.amount)}`).join(' · ');
 const taskEntryPay = (entry: StaffTaskEntry, entries: StaffTaskEntry[]) => {
   if (entry.pay_basis === 'daily') return Number(entry.pay_rate);
   if (entry.pay_basis === 'hourly') return Number(entry.pay_rate) * Number(entry.hours);
-  if (entry.pay_basis === 'target') return Number(targetTierPayout(entry.units_worked, entry.target_tiers));
+  if (entry.pay_basis === 'target') return Number(entry.pay_rate);
   const alreadyCounted = entries.some((candidate) =>
     candidate.worker === entry.worker
     && candidate.task === entry.task
@@ -393,7 +390,7 @@ function DailyAttendancePanel({ period, workers, locked, selectedWorkerId, month
           if (!task) return total;
           if (task.pay_basis === 'daily') return total + Number(task.pay_rate);
           if (task.pay_basis === 'hourly') return total + Number(task.pay_rate) * Number(entry.hours);
-          if (task.pay_basis === 'target') return total + Number(targetTierPayout(entry.units_worked, task.target_tiers));
+          if (task.pay_basis === 'target') return total + Number(task.pay_rate);
           const alreadyCounted = taskEntries.some((candidate) =>
             candidate.worker === entry.worker && candidate.task === entry.task
             && candidate.date.slice(0, 7) === entry.date.slice(0, 7) && candidate.date < entry.date)
@@ -414,9 +411,9 @@ function DailyAttendancePanel({ period, workers, locked, selectedWorkerId, month
         <td>{worker.pay_basis === 'daily' ? <input className="staff-attendance-wage" type="number" min="0" step="1" aria-label={`${worker.full_name} actual units completed on ${date}`} value={draft.output_quantity} placeholder="Units completed" disabled={!draft.attended || locked || saving} onChange={(event) => updateDraft(worker, { output_quantity: event.target.value, daily_wage_override: Number(event.target.value) < 8 ? draft.daily_wage_override : '' })}/> : <span className="staff-attendance-not-applicable">Attendance only</span>}</td>
         <td>
           <div className="staff-inline-task">
-            <label className="catalog-field"><span>Task</span><select aria-label={`Task to assign to ${worker.full_name}`} value={taskDraft.task} disabled={locked || !draft.attended || saving || !assignableTasks.length} onChange={(event) => { const task = activeTasks.find((item) => item.id === Number(event.target.value)); setTaskDrafts((current) => ({ ...current, [worker.id]: { task: event.target.value, hours: task?.pay_basis === 'hourly' ? '1' : '0', units_worked: '' } })); }}><option value="">{!draft.attended ? 'Mark attended first' : !assignableTasks.length ? assignedTaskIds.size ? 'All tasks assigned' : 'No active tasks' : 'Choose task'}</option>{assignableTasks.map((task) => <option key={task.id} value={task.id}>{task.name} · {task.pay_basis_display}{task.pay_basis === 'target' ? `: ${targetTierDescription(task.target_tiers)}` : ` · ${currency(task.pay_rate)}`}</option>)}</select></label>
+            <label className="catalog-field"><span>Task</span><select aria-label={`Task to assign to ${worker.full_name}`} value={taskDraft.task} disabled={locked || !draft.attended || saving || !assignableTasks.length} onChange={(event) => { const task = activeTasks.find((item) => item.id === Number(event.target.value)); setTaskDrafts((current) => ({ ...current, [worker.id]: { task: event.target.value, hours: task?.pay_basis === 'hourly' ? '1' : '0', units_worked: '' } })); }}><option value="">{!draft.attended ? 'Mark attended first' : !assignableTasks.length ? assignedTaskIds.size ? 'All tasks assigned' : 'No active tasks' : 'Choose task'}</option>{assignableTasks.map((task) => <option key={task.id} value={task.id}>{task.name} · {task.pay_basis_display}{task.pay_basis === 'target' ? ` · flat ${currency(task.pay_rate)}` : ` · ${currency(task.pay_rate)}`}</option>)}</select></label>
             {selectedTask?.pay_basis === 'hourly' && <label className="catalog-field"><span>Hours</span><input type="number" min="0.01" step="0.25" aria-label={`Hours for ${selectedTask.name} assigned to ${worker.full_name}`} value={taskDraft.hours} disabled={locked || saving} onChange={(event) => setTaskDrafts((current) => ({ ...current, [worker.id]: { ...taskDraft, hours: event.target.value } }))}/></label>}
-            {selectedTask?.pay_basis === 'target' && <label className="catalog-field"><span>Units completed ({targetTierDescription(selectedTask.target_tiers)})</span><input type="number" min="0" step="1" required aria-label={`Units completed for ${selectedTask.name} assigned to ${worker.full_name}`} value={taskDraft.units_worked} disabled={locked || saving} onChange={(event) => setTaskDrafts((current) => ({ ...current, [worker.id]: { ...taskDraft, units_worked: event.target.value } }))}/></label>}
+            {selectedTask?.pay_basis === 'target' && <label className="catalog-field"><span>Units completed (tracking only)</span><input type="number" min="0" step="1" required aria-label={`Units completed for ${selectedTask.name} assigned to ${worker.full_name} (tracking only)`} value={taskDraft.units_worked} disabled={locked || saving} onChange={(event) => setTaskDrafts((current) => ({ ...current, [worker.id]: { ...taskDraft, units_worked: event.target.value } }))}/></label>}
             <button type="button" className="catalog-button catalog-button-light" disabled={locked || saving || !draft.attended || !selectedTask} onClick={() => assignTaskToWorker(worker)}>Add task</button>
           </div>
           {workerTaskEntries.map((entry) => <small className="staff-inline-task-assigned" key={entry.id}>{entry.task_name} assigned</small>)}
@@ -483,7 +480,7 @@ function TaskPayPanel({ period, date, workers, attendanceRecords, locked, refres
   const selectedMonthTaskPay = monthEntries.reduce((total, entry) => {
     if (entry.pay_basis === 'daily') return total + Number(entry.pay_rate);
     if (entry.pay_basis === 'hourly') return total + Number(entry.pay_rate) * Number(entry.hours);
-    if (entry.pay_basis === 'target') return total + Number(targetTierPayout(entry.units_worked, entry.target_tiers));
+    if (entry.pay_basis === 'target') return total + Number(entry.pay_rate);
     return total;
   }, 0) + [...monthlyTaskRates.values()].reduce((total, rate) => total + rate, 0);
   const activeTasks = tasks.filter((task) => task.is_active);
@@ -726,7 +723,7 @@ function TaskPayPanel({ period, date, workers, attendanceRecords, locked, refres
   }
 
   return <section className="staff-task-pay-panel">
-    <div className="staff-section-heading"><div><span className="staff-section-icon"><BriefcaseBusiness size={14}/></span><div><h2>Task-based pay</h2><p>Target-based tasks pay the amount for the highest target tier reached. Daily and hourly task rates apply as recorded; monthly rates count once per worker/task each month.</p></div></div></div>
+    <div className="staff-section-heading"><div><span className="staff-section-icon"><BriefcaseBusiness size={14}/></span><div><h2>Task-based pay</h2><p>Target-based tasks pay the full configured amount whenever assigned, regardless of units completed. Daily and hourly task rates apply as recorded; monthly rates count once per worker/task each month.</p></div></div></div>
     <div className="staff-task-pay-layout">
       <div>
         <form className="staff-task-form" onSubmit={(event) => void saveTask(event)}>
@@ -741,7 +738,7 @@ function TaskPayPanel({ period, date, workers, attendanceRecords, locked, refres
           }}><option value="daily">Daily</option><option value="hourly">Hourly</option><option value="monthly">Monthly</option><option value="target">Target-based</option></select></label>
           {taskBasis === 'target' ? <div className="staff-task-target-tiers">
             <strong>Target and payout tiers</strong>
-            <small>The payout for the highest target reached is paid once per day; tiers do not stack.</small>
+            <small>The highest payout entered is paid for each task assignment regardless of units completed. Units are recorded for tracking only.</small>
             {taskTargetTiers.map((tier, index) => <div className="staff-task-rate-fields" key={`target-tier-${index}`}>
               <label className="catalog-field">Target units<input required type="number" min="1" step="1" value={tier.target_quantity} onChange={(event) => updateTargetTier(index, { target_quantity: event.target.value })} placeholder="Units"/></label>
               <label className="catalog-field">Payout (UGX)<input required type="number" min="0.01" step="0.01" value={tier.amount} onChange={(event) => updateTargetTier(index, { amount: event.target.value })} placeholder="Amount"/></label>
@@ -751,7 +748,7 @@ function TaskPayPanel({ period, date, workers, attendanceRecords, locked, refres
           </div> : <label className="catalog-field">Pay rate (UGX)<input required type="number" min="0.01" step="0.01" value={taskRate} onChange={(event) => setTaskRate(event.target.value)} placeholder="Enter amount"/></label>}
           <div className="staff-task-form-actions"><button className="catalog-button catalog-button-primary" disabled={saving}>{saving ? 'Saving…' : editingTaskId ? 'Update task' : 'Add task'}</button>{editingTaskId && <button type="button" className="catalog-button catalog-button-light" onClick={resetTaskForm}>Cancel</button>}</div>
         </form>
-        <div className="staff-task-list"><strong>Available tasks</strong>{tasks.map((task) => <div className={`staff-task-list-row ${!task.is_active ? 'is-inactive' : ''}`} key={task.id}><span><b>{task.name}</b><small>{task.pay_basis_display} · {task.pay_basis === 'target' ? targetTierDescription(task.target_tiers) : currency(task.pay_rate)}{task.is_active ? '' : ' · Inactive'}</small></span><button type="button" className="catalog-button catalog-button-light" disabled={saving} onClick={() => editTask(task)}>Edit</button><button type="button" className="catalog-button catalog-button-light" disabled={saving} onClick={() => void setTaskActive(task, !task.is_active)}>{task.is_active ? 'Deactivate' : 'Activate'}</button></div>)}{!tasks.length && <p className="staff-history-empty">Add a task and its pay details to assign task-based pay.</p>}</div>
+        <div className="staff-task-list"><strong>Available tasks</strong>{tasks.map((task) => <div className={`staff-task-list-row ${!task.is_active ? 'is-inactive' : ''}`} key={task.id}><span><b>{task.name}</b><small>{task.pay_basis_display} · {task.pay_basis === 'target' ? `flat ${currency(task.pay_rate)} (units do not affect pay)` : currency(task.pay_rate)}{task.is_active ? '' : ' · Inactive'}</small></span><button type="button" className="catalog-button catalog-button-light" disabled={saving} onClick={() => editTask(task)}>Edit</button><button type="button" className="catalog-button catalog-button-light" disabled={saving} onClick={() => void setTaskActive(task, !task.is_active)}>{task.is_active ? 'Deactivate' : 'Activate'}</button></div>)}{!tasks.length && <p className="staff-history-empty">Add a task and its pay details to assign task-based pay.</p>}</div>
       </div>
       <div className="staff-task-assignments">
         <div className="staff-task-assignment-heading"><span><strong>Worker task assignments</strong><small>{new Date(`${date}T00:00:00`).toLocaleDateString('en-UG', { weekday: 'long', day: 'numeric', month: 'long' })}</small></span><button type="button" className="catalog-button catalog-button-light" onClick={addAssignment} disabled={!recordsLoaded || locked || date > today || !hasAvailableAssignment}><Plus size={13}/>Assign task</button></div>
@@ -767,7 +764,7 @@ function TaskPayPanel({ period, date, workers, attendanceRecords, locked, refres
             <label className="catalog-field">Task<select value={selectedPermanentTask} onChange={(event) => setPermanentTask(event.target.value)}><option value="">Choose task</option>{activeTasks.map((task) => <option key={task.id} value={task.id}>{task.name} · {task.pay_basis === 'target' ? targetTierDescription(task.target_tiers) : task.pay_basis_display}</option>)}</select></label>
             <button type="button" className="catalog-button catalog-button-light" onClick={() => void assignPermanentTask()} disabled={saving || locked || loading || !activeWorkers.length || !activeTasks.length}><Plus size={13}/>Assign</button>
           </div>
-          <div className="staff-permanent-task-list">{permanentAssignments.map((assignment) => <div key={assignment.id}><span><strong>{assignment.worker_name}</strong><small>{assignment.task_name} · {assignment.pay_basis_display}{assignment.pay_basis === 'target' ? ` · ${targetTierDescription(assignment.target_tiers)}` : ` · ${currency(assignment.pay_rate)}`}</small></span><button type="button" className="catalog-button catalog-button-light" disabled={saving || locked} onClick={() => void deactivatePermanentAssignment(assignment)}>Unassign</button></div>)}{!permanentAssignments.length && <small>No permanent task assignments yet.</small>}</div>
+          <div className="staff-permanent-task-list">{permanentAssignments.map((assignment) => <div key={assignment.id}><span><strong>{assignment.worker_name}</strong><small>{assignment.task_name} · {assignment.pay_basis_display}{assignment.pay_basis === 'target' ? ` · flat ${currency(assignment.pay_rate)}` : ` · ${currency(assignment.pay_rate)}`}</small></span><button type="button" className="catalog-button catalog-button-light" disabled={saving || locked} onClick={() => void deactivatePermanentAssignment(assignment)}>Unassign</button></div>)}{!permanentAssignments.length && <small>No permanent task assignments yet.</small>}</div>
         </div>
         {!eligibleWorkers.length && !loading && <p className="staff-history-empty">Mark a worker attended for this day before assigning additional daily tasks.</p>}
         {loading ? <p className="staff-history-empty">Loading task pay records…</p> : drafts.length ? <div className="staff-task-assignment-list">{drafts.map((row, index) => {
@@ -779,20 +776,18 @@ function TaskPayPanel({ period, date, workers, attendanceRecords, locked, refres
           const rowBasis = entry?.pay_basis ?? selectedTask?.pay_basis;
           const rowRate = Number(entry?.pay_rate ?? selectedTask?.pay_rate ?? 0);
           const rowHours = Number(row.hours || 0);
-          const rowTiers = entry?.target_tiers ?? selectedTask?.target_tiers ?? [];
-          const rowPayout = Number(targetTierPayout(Number(row.units_worked), rowTiers));
           const rowAmount = rowBasis === 'daily' ? rowRate
             : rowBasis === 'hourly' ? rowRate * rowHours
-              : rowBasis === 'target' ? rowPayout
+              : rowBasis === 'target' ? rowRate
                 : monthlySeenEarlier ? 0 : rowRate;
           return <div className="staff-task-assignment-row" key={`${row.worker}-${row.task}-${index}`}>
             <label className="catalog-field">Worker<select disabled={locked || permanentEntry} value={row.worker} onChange={(event) => updateAssignment(index, { worker: event.target.value })}>{eligibleWorkers.map((worker) => <option key={worker.id} value={worker.id}>{worker.full_name}</option>)}</select></label>
-            <label className="catalog-field">Task<select disabled={locked || permanentEntry} value={row.task} onChange={(event) => updateAssignment(index, { task: event.target.value })}>{tasks.filter((task) => task.is_active || task.id === Number(row.task)).map((task) => <option key={task.id} value={task.id} disabled={!task.is_active}>{task.name} · {task.pay_basis_display}{task.pay_basis === 'target' ? ` · ${targetTierDescription(task.target_tiers)}` : ''}</option>)}</select></label>
+            <label className="catalog-field">Task<select disabled={locked || permanentEntry} value={row.task} onChange={(event) => updateAssignment(index, { task: event.target.value })}>{tasks.filter((task) => task.is_active || task.id === Number(row.task)).map((task) => <option key={task.id} value={task.id} disabled={!task.is_active}>{task.name} · {task.pay_basis_display}{task.pay_basis === 'target' ? ` · flat ${currency(task.pay_rate)}` : ''}</option>)}</select></label>
             {rowBasis === 'hourly' ? <label className="catalog-field">Hours<input type="number" min="0.01" step="0.25" disabled={locked} value={row.hours} onChange={(event) => updateAssignment(index, { hours: event.target.value })}/></label>
-              : rowBasis === 'target' ? <label className="catalog-field">Units completed ({targetTierDescription(rowTiers)})<input type="number" min="0" step="1" required disabled={locked} value={row.units_worked} onChange={(event) => updateAssignment(index, { units_worked: event.target.value })}/></label>
+              : rowBasis === 'target' ? <label className="catalog-field">Units completed (tracking only)<input type="number" min="0" step="1" required disabled={locked} value={row.units_worked} onChange={(event) => updateAssignment(index, { units_worked: event.target.value })}/></label>
                 : <span className="staff-task-assignment-rate"><small>{rowBasis === 'monthly' ? `Monthly amount${monthlySeenEarlier ? ' · already counted this month' : ''}` : 'Amount for this day'}</small><strong>{currency(rowAmount)}</strong></span>}
             {rowBasis === 'hourly' && <span className="staff-task-assignment-rate"><small>Amount for these hours</small><strong>{currency(rowAmount)}</strong></span>}
-            {rowBasis === 'target' && <span className="staff-task-assignment-rate"><small>{rowPayout > 0 ? 'Highest target reached · payout' : 'Target not reached'}</small><strong>{currency(rowAmount)}</strong></span>}
+            {rowBasis === 'target' && <span className="staff-task-assignment-rate"><small>Full task amount · targets do not change pay</small><strong>{currency(rowAmount)}</strong></span>}
             <button type="button" className="catalog-icon-button" aria-label={permanentEntry ? 'Permanent assignment' : 'Remove task assignment'} title={permanentEntry ? 'Change the permanent assignment above to remove it' : 'Remove task assignment'} disabled={locked || permanentEntry} onClick={() => setDrafts((current) => current.filter((_, rowIndex) => rowIndex !== index))}>{permanentEntry ? <Check size={14}/> : <X size={14}/>}</button>
           </div>;
         })}</div> : <p className="staff-history-empty">No task assignments recorded for this date.</p>}
