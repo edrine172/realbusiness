@@ -13,7 +13,10 @@ if not SECRET_KEY:
         raise ImproperlyConfigured('SECRET_KEY must be set when DEBUG is disabled.')
     SECRET_KEY = 'django-insecure-local-development-key-change-before-deployment'
 def env_list(name, default):
-    return [value.strip() for value in os.environ.get(name, default).split(',') if value.strip()]
+    value = os.environ.get(name)
+    if value is None:
+        return [item.strip() for item in default.split(',') if item.strip()]
+    return [item.strip() for item in value.split(',') if item.strip()]
 
 
 ALLOWED_HOSTS = env_list('ALLOWED_HOSTS', 'ssekanasystems.onrender.com,127.0.0.1,localhost')
@@ -104,11 +107,13 @@ USE_TZ = True
 STATIC_URL = 'static/'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-CORS_ALLOWED_ORIGINS = env_list('CORS_ALLOWED_ORIGINS', ','.join([
+default_cors_origins = [
     'http://localhost:5173',
     'http://127.0.0.1:5173',
     'https://ssekanasystems.vercel.app',
-]))
+]
+CORS_ALLOWED_ORIGINS = env_list('CORS_ALLOWED_ORIGINS', ','.join(default_cors_origins))
+CORS_ALLOWED_ORIGIN_REGEXES = env_list('CORS_ALLOWED_ORIGIN_REGEXES', r'^https://.*\.vercel\.app$')
 CORS_ALLOW_CREDENTIALS = True
 CSRF_COOKIE_SAMESITE = 'Lax' if DEBUG else 'None'
 CSRF_COOKIE_SECURE = not DEBUG
@@ -117,6 +122,7 @@ SESSION_COOKIE_SECURE = not DEBUG
 CSRF_TRUSTED_ORIGINS = env_list('CSRF_TRUSTED_ORIGINS', ','.join([
     'http://localhost:5173',
     'http://127.0.0.1:5173',
+    'https://*.vercel.app',
     'https://ssekanasystems.vercel.app',
 ]))
 REST_FRAMEWORK = {
