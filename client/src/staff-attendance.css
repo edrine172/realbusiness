@@ -40,6 +40,9 @@
 .staff-inline-task .catalog-field select:disabled,.staff-inline-task .catalog-field input:disabled{background:#f3f5f8;color:#9aa5b3}
 .staff-inline-task>.catalog-button{min-height:27px;padding:4px 8px;font-size:8px}
 .staff-inline-task-assigned{display:inline-flex;margin:4px 6px 0 0;color:#36735c;font-size:7px;white-space:nowrap}
+.staff-inline-task-pending{display:inline-flex;align-items:center;gap:3px;margin:4px 6px 0 0;color:#9a6715;font-size:7px;white-space:nowrap}
+.staff-inline-task-pending button{display:grid;place-items:center;padding:2px;border:0;border-radius:3px;background:#fff4df;color:#9a6715;cursor:pointer}
+.staff-inline-task-pending button:disabled{cursor:wait;opacity:.6}
 .staff-attendance-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-top:9px;color:#77869b;font-size:8px}
 .staff-attendance-footer .catalog-button{flex:none}
 .staff-attendance-panel .staff-history-empty{padding:15px 8px;text-align:center}

@@ -13,6 +13,7 @@ import { useConfirmation } from './ConfirmDialog';
 
 type DashboardTarget = 'overview' | 'products' | 'inventory' | 'purchases' | 'pos' | 'sales' | 'reports' | 'customers' | 'suppliers' | 'expenses' | 'users' | 'settings';
 type StaffFormValues = Omit<StaffMemberInput, 'hire_date'> & { hire_date: string };
+type PendingStaffTaskEntry = { date: string; worker: number; task: number; hours: string; units_worked: number };
 
 const periodLabel = (period: string) => new Date(`${period}-01T00:00:00`).toLocaleDateString('en-UG', { month: 'long', year: 'numeric' });
 const thisPeriod = () => { const now = new Date(); return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`; };
@@ -113,9 +114,9 @@ function DailyAttendancePanel({ period, workers, locked, selectedWorkerId, month
   const [taskRefreshToken, setTaskRefreshToken] = useState(0);
   const [drafts, setDrafts] = useState<Record<number, { attended: boolean; output_quantity: string; daily_wage_override: string }>>({});
   const [taskDrafts, setTaskDrafts] = useState<Record<number, { task: string; hours: string; units_worked: string }>>({});
+  const [pendingTaskEntries, setPendingTaskEntries] = useState<PendingStaffTaskEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [savingTaskWorkerId, setSavingTaskWorkerId] = useState<number | null>(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [year, month] = period.split('-').map(Number);
@@ -158,10 +159,13 @@ function DailyAttendancePanel({ period, workers, locked, selectedWorkerId, month
   const taskAssignedWorkerIds = new Set(taskEntries
     .filter((entry) => entry.date === date)
     .map((entry) => entry.worker));
+  const pendingTaskWorkerIds = new Set(pendingTaskEntries
+    .filter((entry) => entry.date === date)
+    .map((entry) => entry.worker));
   const presentCount = attendanceWorkers.filter((worker) => drafts[worker.id]?.attended).length;
   const dailyTotal = dailyWageWorkers.reduce((total, worker) => {
     const draft = drafts[worker.id] ?? { attended: false, output_quantity: '', daily_wage_override: '' };
-    return total + (taskAssignedWorkerIds.has(worker.id)
+    return total + (taskAssignedWorkerIds.has(worker.id) || pendingTaskWorkerIds.has(worker.id)
       ? 0
       : dailyAttendanceWage(date, draft.attended, draft.output_quantity, worker.pay_basis, draft.daily_wage_override));
   }, 0);
@@ -217,11 +221,21 @@ function DailyAttendancePanel({ period, workers, locked, selectedWorkerId, month
       return draft?.attended && draft.output_quantity.trim() === '';
     });
     if (missingOutput) { setError('Enter actual units for each attended daily-paid worker.'); return; }
+    const unattendedPendingTask = pendingTaskEntries.some((entry) =>
+      entry.date === date && !drafts[entry.worker]?.attended);
+    if (unattendedPendingTask) {
+      setError('Mark every worker with a pending task assignment as attended before saving.');
+      return;
+    }
+    const datePendingEntries = pendingTaskEntries.filter((entry) => entry.date === date);
     setSaving(true);
     setError('');
     setNotice('');
+    let attendanceSaved = false;
+    let savedAttendanceRecords: StaffAttendance[] | null = null;
+    let taskAssignmentsSaved = datePendingEntries.length === 0;
     try {
-      const savedRecords = await api.recordStaffAttendance(date, attendanceWorkers.map((worker) => {
+      savedAttendanceRecords = await api.recordStaffAttendance(date, attendanceWorkers.map((worker) => {
         const draft = drafts[worker.id] ?? { attended: false, output_quantity: '', daily_wage_override: '' };
         const outputQuantity = draft.attended && worker.pay_basis === 'daily' ? Number(draft.output_quantity) || 0 : 0;
         return {
@@ -233,17 +247,56 @@ function DailyAttendancePanel({ period, workers, locked, selectedWorkerId, month
             : null,
         };
       }));
-      setAttendanceRecords((current) => [...current.filter((record) => record.date !== date), ...savedRecords]);
+      attendanceSaved = true;
+      if (datePendingEntries.length) {
+        const existingEntries = (await api.staffTaskEntries(period)).filter((entry) => entry.date === date);
+        const duplicateAssignment = datePendingEntries.find((pending) =>
+          existingEntries.some((entry) => entry.worker === pending.worker && entry.task === pending.task));
+        if (duplicateAssignment) {
+          const worker = workers.find((item) => item.id === duplicateAssignment.worker);
+          const task = availableTasks.find((item) => item.id === duplicateAssignment.task);
+          throw new Error(`${worker?.full_name ?? 'This worker'} is already assigned to ${task?.name ?? 'this task'} on this date.`);
+        }
+        const savedEntries = await api.recordStaffTaskEntries(date, [
+          ...existingEntries.map((entry) => ({
+            worker: entry.worker,
+            task: entry.task,
+            hours: entry.hours,
+            units_worked: entry.units_worked,
+          })),
+          ...datePendingEntries.map(({ worker, task, hours, units_worked }) => ({
+            worker,
+            task,
+            hours,
+            units_worked,
+          })),
+        ]);
+        setTaskEntries((current) => [...current.filter((entry) => entry.date !== date), ...savedEntries]);
+        setPendingTaskEntries((current) => current.filter((entry) => entry.date !== date));
+        setTaskRefreshToken((current) => current + 1);
+        taskAssignmentsSaved = true;
+      }
+      setAttendanceRecords((current) => [...current.filter((record) => record.date !== date), ...(savedAttendanceRecords ?? [])]);
       await onSaved();
-      setNotice(`Attendance saved for ${new Date(`${date}T00:00:00`).toLocaleDateString('en-UG', { day: 'numeric', month: 'long' })}.`);
-    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Attendance could not be saved.'); }
+      setNotice(`Attendance${pendingTaskEntries.some((entry) => entry.date === date) ? ' and task assignments' : ''} saved for ${new Date(`${date}T00:00:00`).toLocaleDateString('en-UG', { day: 'numeric', month: 'long' })}.`);
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : 'The request failed.';
+      const savedRecords = savedAttendanceRecords;
+      if (savedRecords) {
+        setAttendanceRecords((current) => [...current.filter((record) => record.date !== date), ...savedRecords]);
+      }
+      setError(!attendanceSaved
+        ? `Attendance could not be saved. ${message}`
+        : !taskAssignmentsSaved
+          ? `Attendance was saved, but task assignments could not be saved. ${message}`
+          : `Attendance${datePendingEntries.length ? ' and task assignments were' : ' was'} saved, but the dashboard could not be refreshed. ${message}`);
+    }
     finally { setSaving(false); }
   }
 
-  async function assignTaskToWorker(worker: StaffMember) {
-    const attendance = attendanceRecords.find((record) => record.worker === worker.id && record.date === date && record.attended);
+  function assignTaskToWorker(worker: StaffMember) {
     const attendanceDraft = drafts[worker.id] ?? { attended: false, output_quantity: '', daily_wage_override: '' };
-    const assignment = taskDrafts[worker.id];
+    const assignment = taskDrafts[worker.id] ?? { task: '', hours: '', units_worked: '' };
     const task = activeTasks.find((item) => item.id === Number(assignment?.task));
     if (!attendanceDraft.attended || !task) {
       setError('Mark the worker as attended before assigning a task.');
@@ -261,60 +314,22 @@ function DailyAttendancePanel({ period, workers, locked, selectedWorkerId, month
       setError('Enter the number of units completed for this target-based task.');
       return;
     }
-    if (taskEntries.some((entry) => entry.date === date && entry.worker === worker.id && entry.task === task.id)) {
+    if (taskEntries.some((entry) => entry.date === date && entry.worker === worker.id && entry.task === task.id)
+      || pendingTaskEntries.some((entry) => entry.date === date && entry.worker === worker.id && entry.task === task.id)) {
       setError(`${worker.full_name} is already assigned to ${task.name} on this date.`);
       return;
     }
-    setSavingTaskWorkerId(worker.id);
     setError('');
     setNotice('');
-    try {
-      if (!attendance) {
-        const outputQuantity = worker.pay_basis === 'daily' ? Number(attendanceDraft.output_quantity) || 0 : 0;
-        const savedAttendance = await api.recordStaffAttendance(date, [{
-          worker: worker.id,
-          attended: true,
-          output_quantity: outputQuantity,
-          daily_wage_override: worker.pay_basis === 'daily'
-            && outputQuantity < 8
-            && attendanceDraft.daily_wage_override.trim()
-            ? Number(attendanceDraft.daily_wage_override)
-            : null,
-        }]);
-        setAttendanceRecords((current) => [
-          ...current.filter((record) => record.date !== date || record.worker !== worker.id),
-          ...savedAttendance,
-        ]);
-      }
-      const existingEntries = (await api.staffTaskEntries(period)).filter((entry) => entry.date === date);
-      if (existingEntries.some((entry) => entry.worker === worker.id && entry.task === task.id)) {
-        setError(`${worker.full_name} is already assigned to ${task.name} on this date.`);
-        return;
-      }
-      const savedEntries = await api.recordStaffTaskEntries(date, [
-        ...existingEntries.map((entry) => ({
-          worker: entry.worker,
-          task: entry.task,
-          hours: entry.hours,
-          units_worked: entry.units_worked,
-        })),
-        {
-          worker: worker.id,
-          task: task.id,
-          hours: task.pay_basis === 'hourly' ? assignment.hours : '0',
-          units_worked: task.pay_basis === 'target' ? Number(assignment.units_worked) : 0,
-        },
-      ]);
-      setTaskEntries((current) => [...current.filter((entry) => entry.date !== date), ...savedEntries]);
-      setTaskRefreshToken((current) => current + 1);
-      setTaskDrafts((current) => ({ ...current, [worker.id]: { task: '', hours: '', units_worked: '' } }));
-      await onSaved();
-      setNotice(`${attendance ? '' : 'Attendance saved. '}${task.name} assigned to ${worker.full_name} for this date.`);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Task could not be assigned to this worker.');
-    } finally {
-      setSavingTaskWorkerId(null);
-    }
+    setPendingTaskEntries((current) => [...current, {
+      date,
+      worker: worker.id,
+      task: task.id,
+      hours: task.pay_basis === 'hourly' ? assignment.hours : '0',
+      units_worked: task.pay_basis === 'target' ? Number(assignment.units_worked) : 0,
+    }]);
+    setTaskDrafts((current) => ({ ...current, [worker.id]: { task: '', hours: '', units_worked: '' } }));
+    setNotice(`${task.name} added for ${worker.full_name}. Save attendance to confirm both.`);
   }
 
   return <>
@@ -370,31 +385,54 @@ function DailyAttendancePanel({ period, workers, locked, selectedWorkerId, month
       const draft = drafts[worker.id] ?? { attended: false, output_quantity: '', daily_wage_override: '' };
       const hasRecord = selectedDateRecords.some((record) => record.worker === worker.id);
       const workerTaskEntries = taskEntries.filter((entry) => entry.date === date && entry.worker === worker.id);
-      const hasTaskAssignment = workerTaskEntries.length > 0;
-      const taskPay = workerTaskEntries.reduce((total, entry) => total + taskEntryPay(entry, taskEntries), 0);
+      const workerPendingTaskEntries = pendingTaskEntries.filter((entry) => entry.date === date && entry.worker === worker.id);
+      const hasTaskAssignment = workerTaskEntries.length > 0 || workerPendingTaskEntries.length > 0;
+      const taskPay = workerTaskEntries.reduce((total, entry) => total + taskEntryPay(entry, taskEntries), 0)
+        + workerPendingTaskEntries.reduce((total, entry) => {
+          const task = activeTasks.find((item) => item.id === entry.task);
+          if (!task) return total;
+          if (task.pay_basis === 'daily') return total + Number(task.pay_rate);
+          if (task.pay_basis === 'hourly') return total + Number(task.pay_rate) * Number(entry.hours);
+          if (task.pay_basis === 'target') return total + Number(targetTierPayout(entry.units_worked, task.target_tiers));
+          const alreadyCounted = taskEntries.some((candidate) =>
+            candidate.worker === entry.worker && candidate.task === entry.task
+            && candidate.date.slice(0, 7) === entry.date.slice(0, 7) && candidate.date < entry.date)
+            || pendingTaskEntries.some((candidate) =>
+              candidate.worker === entry.worker && candidate.task === entry.task
+              && candidate.date.slice(0, 7) === entry.date.slice(0, 7) && candidate.date < entry.date);
+          return total + (alreadyCounted ? 0 : Number(task.pay_rate));
+        }, 0);
       const wage = hasTaskAssignment ? 0 : dailyAttendanceWage(date, draft.attended, draft.output_quantity, worker.pay_basis, draft.daily_wage_override);
       const needsSupervisorOverride = worker.pay_basis === 'daily' && draft.attended && Number(draft.output_quantity) < 8 && !hasTaskAssignment;
       const taskDraft = taskDrafts[worker.id] ?? { task: '', hours: '', units_worked: '' };
-      const assignedTaskIds = new Set(workerTaskEntries.map((entry) => entry.task));
+      const assignedTaskIds = new Set([...workerTaskEntries.map((entry) => entry.task), ...workerPendingTaskEntries.map((entry) => entry.task)]);
       const assignableTasks = activeTasks.filter((task) => !assignedTaskIds.has(task.id));
       const selectedTask = activeTasks.find((task) => task.id === Number(taskDraft.task));
       return <tr key={worker.id} className={selectedWorkerId === worker.id ? 'is-selected-worker' : ''}>
         <td><button type="button" className="staff-attendance-worker-link" aria-pressed={selectedWorkerId === worker.id} onClick={() => onSelectedWorkerChange(worker.id)}><strong>{worker.full_name}</strong><small>{worker.employee_number} · {worker.job_title}</small></button></td>
-        <td><label className="staff-attendance-check"><input type="checkbox" checked={draft.attended} disabled={locked} onChange={(event) => updateDraft(worker, { attended: event.target.checked })}/><span>{hasRecord ? draft.attended ? 'Worked' : 'Did not work' : draft.attended ? 'Worked (unsaved)' : 'No entry'}</span></label></td>
-        <td>{worker.pay_basis === 'daily' ? <input className="staff-attendance-wage" type="number" min="0" step="1" aria-label={`${worker.full_name} actual units completed on ${date}`} value={draft.output_quantity} placeholder="Units completed" disabled={!draft.attended || locked} onChange={(event) => updateDraft(worker, { output_quantity: event.target.value, daily_wage_override: Number(event.target.value) < 8 ? draft.daily_wage_override : '' })}/> : <span className="staff-attendance-not-applicable">Attendance only</span>}</td>
+        <td><label className="staff-attendance-check"><input type="checkbox" checked={draft.attended} disabled={locked || saving} onChange={(event) => updateDraft(worker, { attended: event.target.checked })}/><span>{hasRecord ? draft.attended ? 'Worked' : 'Did not work' : draft.attended ? 'Worked (unsaved)' : 'No entry'}</span></label></td>
+        <td>{worker.pay_basis === 'daily' ? <input className="staff-attendance-wage" type="number" min="0" step="1" aria-label={`${worker.full_name} actual units completed on ${date}`} value={draft.output_quantity} placeholder="Units completed" disabled={!draft.attended || locked || saving} onChange={(event) => updateDraft(worker, { output_quantity: event.target.value, daily_wage_override: Number(event.target.value) < 8 ? draft.daily_wage_override : '' })}/> : <span className="staff-attendance-not-applicable">Attendance only</span>}</td>
         <td>
           <div className="staff-inline-task">
-            <label className="catalog-field"><span>Task</span><select aria-label={`Task to assign to ${worker.full_name}`} value={taskDraft.task} disabled={locked || !draft.attended || savingTaskWorkerId === worker.id || !assignableTasks.length} onChange={(event) => { const task = activeTasks.find((item) => item.id === Number(event.target.value)); setTaskDrafts((current) => ({ ...current, [worker.id]: { task: event.target.value, hours: task?.pay_basis === 'hourly' ? '1' : '0', units_worked: '' } })); }}><option value="">{!draft.attended ? 'Mark attended first' : !assignableTasks.length ? assignedTaskIds.size ? 'All tasks assigned' : 'No active tasks' : 'Choose task'}</option>{assignableTasks.map((task) => <option key={task.id} value={task.id}>{task.name} · {task.pay_basis_display}{task.pay_basis === 'target' ? `: ${targetTierDescription(task.target_tiers)}` : ` · ${currency(task.pay_rate)}`}</option>)}</select></label>
-            {selectedTask?.pay_basis === 'hourly' && <label className="catalog-field"><span>Hours</span><input type="number" min="0.01" step="0.25" aria-label={`Hours for ${selectedTask.name} assigned to ${worker.full_name}`} value={taskDraft.hours} disabled={locked || savingTaskWorkerId === worker.id} onChange={(event) => setTaskDrafts((current) => ({ ...current, [worker.id]: { ...taskDraft, hours: event.target.value } }))}/></label>}
-            {selectedTask?.pay_basis === 'target' && <label className="catalog-field"><span>Units completed ({targetTierDescription(selectedTask.target_tiers)})</span><input type="number" min="0" step="1" required aria-label={`Units completed for ${selectedTask.name} assigned to ${worker.full_name}`} value={taskDraft.units_worked} disabled={locked || savingTaskWorkerId === worker.id} onChange={(event) => setTaskDrafts((current) => ({ ...current, [worker.id]: { ...taskDraft, units_worked: event.target.value } }))}/></label>}
-            <button type="button" className="catalog-button catalog-button-light" disabled={locked || !draft.attended || !selectedTask || savingTaskWorkerId === worker.id} onClick={() => void assignTaskToWorker(worker)}>{savingTaskWorkerId === worker.id ? 'Assigning…' : 'Assign'}</button>
+            <label className="catalog-field"><span>Task</span><select aria-label={`Task to assign to ${worker.full_name}`} value={taskDraft.task} disabled={locked || !draft.attended || saving || !assignableTasks.length} onChange={(event) => { const task = activeTasks.find((item) => item.id === Number(event.target.value)); setTaskDrafts((current) => ({ ...current, [worker.id]: { task: event.target.value, hours: task?.pay_basis === 'hourly' ? '1' : '0', units_worked: '' } })); }}><option value="">{!draft.attended ? 'Mark attended first' : !assignableTasks.length ? assignedTaskIds.size ? 'All tasks assigned' : 'No active tasks' : 'Choose task'}</option>{assignableTasks.map((task) => <option key={task.id} value={task.id}>{task.name} · {task.pay_basis_display}{task.pay_basis === 'target' ? `: ${targetTierDescription(task.target_tiers)}` : ` · ${currency(task.pay_rate)}`}</option>)}</select></label>
+            {selectedTask?.pay_basis === 'hourly' && <label className="catalog-field"><span>Hours</span><input type="number" min="0.01" step="0.25" aria-label={`Hours for ${selectedTask.name} assigned to ${worker.full_name}`} value={taskDraft.hours} disabled={locked || saving} onChange={(event) => setTaskDrafts((current) => ({ ...current, [worker.id]: { ...taskDraft, hours: event.target.value } }))}/></label>}
+            {selectedTask?.pay_basis === 'target' && <label className="catalog-field"><span>Units completed ({targetTierDescription(selectedTask.target_tiers)})</span><input type="number" min="0" step="1" required aria-label={`Units completed for ${selectedTask.name} assigned to ${worker.full_name}`} value={taskDraft.units_worked} disabled={locked || saving} onChange={(event) => setTaskDrafts((current) => ({ ...current, [worker.id]: { ...taskDraft, units_worked: event.target.value } }))}/></label>}
+            <button type="button" className="catalog-button catalog-button-light" disabled={locked || saving || !draft.attended || !selectedTask} onClick={() => assignTaskToWorker(worker)}>Add task</button>
           </div>
           {workerTaskEntries.map((entry) => <small className="staff-inline-task-assigned" key={entry.id}>{entry.task_name} assigned</small>)}
+          {workerPendingTaskEntries.map((entry) => {
+            const task = activeTasks.find((item) => item.id === entry.task);
+            if (!task) return null;
+            return <span className="staff-inline-task-pending" key={`${entry.date}-${entry.worker}-${entry.task}`}>
+              {task.name} pending save
+              <button type="button" disabled={saving} aria-label={`Remove pending ${task.name} assignment for ${worker.full_name}`} onClick={() => setPendingTaskEntries((current) => current.filter((candidate) => candidate !== entry))}><X size={11}/></button>
+            </span>;
+          })}
         </td>
-        <td>{worker.pay_basis === 'daily' ? <span className="staff-attendance-calculated-wage"><strong>{currency(hasTaskAssignment ? taskPay : wage)}</strong><small>{hasTaskAssignment ? 'Assigned task pay only' : dailyAttendanceTier(draft.output_quantity)}</small></span> : <span className="staff-attendance-not-applicable">—</span>}{needsSupervisorOverride && <label className="staff-attendance-override">Supervisor override (UGX)<input type="number" min="0" step="0.01" aria-label={`${worker.full_name} supervisor wage override for ${date}`} placeholder="0 = no override" value={draft.daily_wage_override} disabled={locked} onChange={(event) => updateDraft(worker, { daily_wage_override: event.target.value })}/></label>}</td>
+        <td>{worker.pay_basis === 'daily' ? <span className="staff-attendance-calculated-wage"><strong>{currency(hasTaskAssignment ? taskPay : wage)}</strong><small>{hasTaskAssignment ? workerPendingTaskEntries.length ? 'Includes pending task pay' : 'Assigned task pay only' : dailyAttendanceTier(draft.output_quantity)}</small></span> : <span className="staff-attendance-not-applicable">—</span>}{needsSupervisorOverride && <label className="staff-attendance-override">Supervisor override (UGX)<input type="number" min="0" step="0.01" aria-label={`${worker.full_name} supervisor wage override for ${date}`} placeholder="0 = no override" value={draft.daily_wage_override} disabled={locked || saving} onChange={(event) => updateDraft(worker, { daily_wage_override: event.target.value })}/></label>}</td>
       </tr>;
     })}</tbody></table></div> : attendanceWorkers.length ? <div className="staff-history-empty">No workers match “{workerSearch}”.</div> : <div className="staff-history-empty">Add an active worker to record attendance.</div>}
-    <div className="staff-attendance-footer"><span>{locked ? 'Attendance is locked because payroll has been generated for this month.' : 'Daily-paid workers’ attendance wages are totaled into payroll.'}</span><button className="catalog-button catalog-button-primary" onClick={() => void saveAttendance()} disabled={!attendanceWorkers.length || loading || saving || locked || date > today}>{saving ? 'Saving…' : 'Save attendance'}</button></div>
+    <div className="staff-attendance-footer"><span>{locked ? 'Attendance is locked because payroll has been generated for this month.' : pendingTaskWorkerIds.size ? `${pendingTaskEntries.filter((entry) => entry.date === date).length} task assignment${pendingTaskEntries.filter((entry) => entry.date === date).length === 1 ? '' : 's'} will save with attendance. Daily-paid workers’ attendance wages are totaled into payroll.` : 'Daily-paid workers’ attendance wages are totaled into payroll.'}</span><button className="catalog-button catalog-button-primary" onClick={() => void saveAttendance()} disabled={!attendanceWorkers.length || loading || saving || locked || date > today}>{saving ? 'Saving…' : pendingTaskWorkerIds.size ? 'Save attendance & tasks' : 'Save attendance'}</button></div>
   </section>
   <TaskPayPanel period={period} date={date} workers={workers} attendanceRecords={attendanceRecords} locked={locked} refreshToken={taskRefreshToken} onSaved={onSaved} onEntriesChange={setTaskEntries} onTasksChange={setAvailableTasks}/>
   </>;
