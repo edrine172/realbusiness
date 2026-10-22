@@ -22,7 +22,7 @@ const dailyAttendanceWage = (date: string, attended: boolean, outputQuantity: st
   if (!attended || payBasis !== 'daily') return 0;
   const units = Number(outputQuantity);
   const tierWage = isSunday(date)
-    ? units >= 15 ? 5000 : units >= 12 ? 4500 : units >= 8 ? 4000 : null
+    ? units >= 15 ? 7000 : units >= 12 ? 6000 : units >= 8 ? 4000 : null
     : units >= 15 ? 7000 : units >= 12 ? 6000 : units >= 8 ? 5000 : null;
   return tierWage ?? (wageOverride.trim() ? Number(wageOverride) : 0);
 };
@@ -828,7 +828,7 @@ export default function StaffDashboard({ onNavigate, onSignOut }: { onNavigate: 
             <td><button type="button" className={`staff-ledger-value staff-ledger-identity staff-roster-worker-link ${selectedWorkerId === worker.id ? 'is-selected' : ''}`} aria-pressed={selectedWorkerId === worker.id} onClick={() => { setSelectedWorkerId(worker.id); attendancePanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}><strong>{worker.full_name}</strong><small>{worker.employee_number}</small></button></td>
             <td><span className="staff-ledger-value staff-ledger-identity"><strong>{worker.job_title}</strong><small>{worker.department}</small></span></td>
             <td><span className="staff-ledger-value">{worker.period_days_worked || '—'}</span></td>
-            <td><span className="staff-ledger-value staff-ledger-money"><strong>{worker.pay_basis === 'daily' ? `${currency(7000)} / ${currency(6000)}` : currency(worker.pay_rate)}</strong><small>{worker.pay_basis === 'daily' ? `Sunday (10+ units) ${currency(5000)} / ${currency(4000)}` : worker.pay_basis_display}</small></span></td>
+            <td><span className="staff-ledger-value staff-ledger-money"><strong>{worker.pay_basis === 'daily' ? `Weekday (15+/12+/8+): ${currency(7000)} / ${currency(6000)} / ${currency(5000)}` : currency(worker.pay_rate)}</strong><small>{worker.pay_basis === 'daily' ? `Sunday (15+/12+/8+): ${currency(7000)} / ${currency(6000)} / ${currency(4000)}` : worker.pay_basis_display}</small></span></td>
             <td><span className="staff-ledger-value staff-ledger-money">{currency(taskPay)}</span></td>
             <td><span className="staff-ledger-value staff-ledger-money">{currency(paidAmount)}</span></td>
             <td><span className="staff-ledger-value" title="Scheduled and unpaid days are not tracked yet">—</span></td>

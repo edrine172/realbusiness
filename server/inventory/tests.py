@@ -565,8 +565,8 @@ class StaffPayrollTests(APITestCase):
             '2025-02-05': (8, '5000.00'),
             '2025-02-06': (7, '0.00'),
             '2025-02-08': (12, '6000.00'),
-            '2025-02-09': (15, '5000.00'),
-            '2025-02-16': (12, '4500.00'),
+            '2025-02-09': (15, '7000.00'),
+            '2025-02-16': (12, '6000.00'),
             '2025-02-23': (8, '4000.00'),
             '2025-02-02': (7, '0.00'),
         }
@@ -589,16 +589,16 @@ class StaffPayrollTests(APITestCase):
 
         dashboard = self.client.get('/api/staff/dashboard/?period=2025-02').data
         self.assertEqual(dashboard['workers'][0]['period_days_worked'], 9)
-        self.assertEqual(dashboard['workers'][0]['period_gross'], Decimal('37500.00'))
-        self.assertEqual(dashboard['summary']['gross_total'], Decimal('37500.00'))
+        self.assertEqual(dashboard['workers'][0]['period_gross'], Decimal('41000.00'))
+        self.assertEqual(dashboard['summary']['gross_total'], Decimal('41000.00'))
 
         generated = self.client.post('/api/staff/payroll-runs/generate/', {'period': '2025-02'}, format='json')
         self.assertEqual(generated.status_code, 201)
-        self.assertEqual(generated.data['gross_total'], '37500.00')
+        self.assertEqual(generated.data['gross_total'], '41000.00')
         self.assertEqual(generated.data['lines'][0]['days_worked'], 9)
-        self.assertEqual(generated.data['lines'][0]['withholding'], '3750.00')
+        self.assertEqual(generated.data['lines'][0]['withholding'], '4100.00')
         self.assertEqual(generated.data['lines'][0]['benefits'], '5000.00')
-        self.assertEqual(generated.data['lines'][0]['net_pay'], '28750.00')
+        self.assertEqual(generated.data['lines'][0]['net_pay'], '31900.00')
         locked = self.client.post('/api/staff/attendance/record_day/', {
             'date': '2025-02-03',
             'records': [{'worker': worker_id, 'attended': True, 'output_quantity': 100}],
