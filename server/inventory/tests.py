@@ -401,6 +401,73 @@ class StaffPayrollTests(APITestCase):
         self.assertEqual(duplicate.status_code, 400)
         self.assertFalse(StaffTaskEntry.objects.exists())
 
+    def test_target_task_pays_highest_reached_daily_target_tier(self):
+        worker = self.create_worker()
+        missing_target = self.client.post('/api/staff/tasks/', {
+            'name': 'Pack cartons without target',
+            'pay_basis': 'target',
+            'pay_rate': '750.00',
+        }, format='json')
+        self.assertEqual(missing_target.status_code, 400)
+
+        task = self.client.post('/api/staff/tasks/', {
+            'name': 'Pack target cartons',
+            'pay_basis': 'target',
+            'pay_rate': '1500.00',
+            'target_tiers': [
+                {'target_quantity': 15, 'amount': '1500.00'},
+                {'target_quantity': 10, 'amount': '750.00'},
+                {'target_quantity': 12, 'amount': '1000.00'},
+            ],
+        }, format='json')
+        self.assertEqual(task.status_code, 201)
+        self.assertEqual(task.data['target_tiers'], [
+            {'target_quantity': 10, 'amount': '750.00'},
+            {'target_quantity': 12, 'amount': '1000.00'},
+            {'target_quantity': 15, 'amount': '1500.00'},
+        ])
+        task_id = task.data['id']
+
+        for work_date in ('2025-02-03', '2025-02-04', '2025-02-05', '2025-02-06'):
+            attendance = self.client.post('/api/staff/attendance/record_day/', {
+                'date': work_date,
+                'records': [{'worker': worker.data['id'], 'attended': True}],
+            }, format='json')
+            self.assertEqual(attendance.status_code, 200)
+
+        missing_units = self.client.post('/api/staff/task-entries/record_day/', {
+            'date': '2025-02-03',
+            'records': [{'worker': worker.data['id'], 'task': task_id}],
+        }, format='json')
+        self.assertEqual(missing_units.status_code, 400)
+
+        for work_date, units in (
+            ('2025-02-03', 9),
+            ('2025-02-04', 10),
+            ('2025-02-05', 12),
+            ('2025-02-06', 15),
+        ):
+            recorded = self.client.post('/api/staff/task-entries/record_day/', {
+                'date': work_date,
+                'records': [{
+                    'worker': worker.data['id'],
+                    'task': task_id,
+                    'units_worked': units,
+                }],
+            }, format='json')
+            self.assertEqual(recorded.status_code, 200, recorded.data)
+            self.assertEqual(recorded.data[0]['target_tiers'], task.data['target_tiers'])
+            self.assertEqual(recorded.data[0]['units_worked'], units)
+
+        dashboard = self.client.get('/api/staff/dashboard/?period=2025-02').data
+        self.assertEqual(dashboard['workers'][0]['period_task_pay'], Decimal('3250.00'))
+        self.assertEqual(dashboard['summary']['gross_total'], Decimal('1003250.00'))
+
+        payroll = self.client.post('/api/staff/payroll-runs/generate/', {'period': '2025-02'}, format='json')
+        self.assertEqual(payroll.status_code, 201)
+        self.assertEqual(payroll.data['lines'][0]['task_pay'], '3250.00')
+        self.assertEqual(payroll.data['lines'][0]['gross_pay'], '1003250.00')
+
     def test_permanent_task_assignments_create_pay_entries_only_for_attended_days(self):
         worker = self.create_worker()
         task = self.client.post('/api/staff/tasks/', {

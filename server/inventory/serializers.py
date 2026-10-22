@@ -730,8 +730,39 @@ class PayrollLineSerializer(serializers.ModelSerializer):
 
 class StaffTaskSerializer(serializers.ModelSerializer):
     pay_basis_display = serializers.CharField(source='get_pay_basis_display', read_only=True)
+    target_tiers = serializers.ListField(child=serializers.DictField(), required=False)
 
     def validate(self, attrs):
+        pay_basis = attrs.get('pay_basis', self.instance.pay_basis if self.instance else None)
+        target_tiers = attrs.get(
+            'target_tiers',
+            self.instance.target_tiers if self.instance else [],
+        )
+        if pay_basis == StaffTask.PayBasis.TARGET:
+            if not target_tiers:
+                raise serializers.ValidationError({'target_tiers': 'Add at least one target and payout for target-based tasks.'})
+            validated_tiers = []
+            for tier in target_tiers:
+                try:
+                    if set(tier) != {'target_quantity', 'amount'}:
+                        raise ValueError
+                    raw_target = tier['target_quantity']
+                    if isinstance(raw_target, bool) or str(raw_target).strip() != str(int(raw_target)):
+                        raise ValueError
+                    target = int(raw_target)
+                    amount = Decimal(str(tier['amount']))
+                except (KeyError, TypeError, ValueError, ArithmeticError):
+                    raise serializers.ValidationError({'target_tiers': 'Each tier needs a whole-number target and a valid payout amount.'})
+                if target <= 0 or amount <= 0 or not amount.is_finite():
+                    raise serializers.ValidationError({'target_tiers': 'Tier targets and payout amounts must be greater than zero.'})
+                validated_tiers.append({'target_quantity': target, 'amount': str(amount)})
+            targets = [tier['target_quantity'] for tier in validated_tiers]
+            if len(targets) != len(set(targets)):
+                raise serializers.ValidationError({'target_tiers': 'Each target quantity must be unique.'})
+            attrs['target_tiers'] = sorted(validated_tiers, key=lambda tier: tier['target_quantity'])
+            attrs['pay_rate'] = max(Decimal(tier['amount']) for tier in attrs['target_tiers'])
+        elif target_tiers:
+            attrs['target_tiers'] = []
         if (
             self.instance
             and attrs.get('pay_basis', self.instance.pay_basis) != self.instance.pay_basis
@@ -753,7 +784,7 @@ class StaffTaskSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = StaffTask
-        fields = ['id', 'name', 'pay_basis', 'pay_basis_display', 'pay_rate', 'is_active', 'created_at', 'updated_at']
+        fields = ['id', 'name', 'pay_basis', 'pay_basis_display', 'pay_rate', 'target_tiers', 'is_active', 'created_at', 'updated_at']
         read_only_fields = ['id', 'created_at', 'updated_at']
 
 
@@ -761,12 +792,16 @@ class StaffTaskEntryInputSerializer(serializers.Serializer):
     worker = serializers.PrimaryKeyRelatedField(queryset=StaffMember.objects.all())
     task = serializers.PrimaryKeyRelatedField(queryset=StaffTask.objects.all())
     hours = serializers.DecimalField(max_digits=7, decimal_places=2, min_value=Decimal('0'), required=False, default=Decimal('0'))
+    units_worked = serializers.IntegerField(min_value=0, required=False, default=0)
 
     def validate(self, attrs):
-        if attrs['task'].pay_basis == StaffTask.PayBasis.HOURLY and attrs['hours'] <= 0:
+        task = attrs['task']
+        if task.pay_basis == StaffTask.PayBasis.HOURLY and attrs['hours'] <= 0:
             raise serializers.ValidationError({'hours': 'Enter hours worked for an hourly task.'})
-        if attrs['task'].pay_basis != StaffTask.PayBasis.HOURLY:
+        if task.pay_basis != StaffTask.PayBasis.HOURLY:
             attrs['hours'] = Decimal('0')
+        if task.pay_basis != StaffTask.PayBasis.TARGET:
+            attrs['units_worked'] = 0
         return attrs
 
 
@@ -779,7 +814,7 @@ class StaffTaskEntrySerializer(serializers.ModelSerializer):
         model = StaffTaskEntry
         fields = [
             'id', 'worker', 'worker_name', 'employee_number', 'task', 'task_name', 'date', 'assignment_type',
-            'pay_basis', 'pay_basis_display', 'pay_rate', 'hours', 'created_at',
+            'pay_basis', 'pay_basis_display', 'pay_rate', 'hours', 'target_tiers', 'units_worked', 'created_at',
         ]
         read_only_fields = fields
 
@@ -790,6 +825,7 @@ class StaffTaskAssignmentSerializer(serializers.ModelSerializer):
     pay_basis = serializers.CharField(source='task.pay_basis', read_only=True)
     pay_basis_display = serializers.CharField(source='task.get_pay_basis_display', read_only=True)
     pay_rate = serializers.DecimalField(source='task.pay_rate', max_digits=12, decimal_places=2, read_only=True)
+    target_tiers = serializers.ListField(source='task.target_tiers', child=serializers.DictField(), read_only=True)
 
     def validate(self, attrs):
         worker = attrs.get('worker', self.instance.worker if self.instance else None)
@@ -814,9 +850,9 @@ class StaffTaskAssignmentSerializer(serializers.ModelSerializer):
         model = StaffTaskAssignment
         fields = [
             'id', 'worker', 'worker_name', 'task', 'task_name', 'pay_basis', 'pay_basis_display',
-            'pay_rate', 'assigned_from', 'is_active', 'created_at',
+            'pay_rate', 'target_tiers', 'assigned_from', 'is_active', 'created_at',
         ]
-        read_only_fields = ['id', 'worker_name', 'task_name', 'pay_basis', 'pay_basis_display', 'pay_rate', 'created_at']
+        read_only_fields = ['id', 'worker_name', 'task_name', 'pay_basis', 'pay_basis_display', 'pay_rate', 'target_tiers', 'created_at']
 
 
 class StaffAttendanceInputSerializer(serializers.Serializer):

@@ -664,12 +664,18 @@ export interface StaffAttendance {
   updated_at: string;
 }
 
+export interface StaffTaskTargetTier {
+  target_quantity: number;
+  amount: string;
+}
+
 export interface StaffTask {
   id: number;
   name: string;
-  pay_basis: 'daily' | 'hourly' | 'monthly';
+  pay_basis: 'daily' | 'hourly' | 'monthly' | 'target';
   pay_basis_display: string;
   pay_rate: string;
+  target_tiers: StaffTaskTargetTier[];
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -688,6 +694,8 @@ export interface StaffTaskEntry {
   pay_basis_display: string;
   pay_rate: string;
   hours: string;
+  target_tiers: StaffTaskTargetTier[];
+  units_worked: number;
   created_at: string;
 }
 
@@ -700,6 +708,7 @@ export interface StaffTaskAssignment {
   pay_basis: StaffTask['pay_basis'];
   pay_basis_display: string;
   pay_rate: string;
+  target_tiers: StaffTaskTargetTier[];
   assigned_from: string;
   is_active: boolean;
   created_at: string;
@@ -1029,9 +1038,9 @@ export const api = {
   recordStaffAttendance: (date: string, records: Array<{ worker: number; attended: boolean; output_quantity: number; daily_wage_override?: number | null }>) =>
     request<StaffAttendance[]>('/staff/attendance/record_day/', { method: 'POST', body: JSON.stringify({ date, records }) }, 'required', true),
   staffTasks: () => request<StaffTask[]>('/staff/tasks/'),
-  createStaffTask: (task: Pick<StaffTask, 'name' | 'pay_basis' | 'pay_rate'>) =>
+  createStaffTask: (task: Pick<StaffTask, 'name' | 'pay_basis' | 'pay_rate' | 'target_tiers'>) =>
     request<StaffTask>('/staff/tasks/', { method: 'POST', body: JSON.stringify(task) }),
-  updateStaffTask: (id: number, task: Partial<Pick<StaffTask, 'name' | 'pay_basis' | 'pay_rate' | 'is_active'>>) =>
+  updateStaffTask: (id: number, task: Partial<Pick<StaffTask, 'name' | 'pay_basis' | 'pay_rate' | 'target_tiers' | 'is_active'>>) =>
     request<StaffTask>(`/staff/tasks/${id}/`, { method: 'PATCH', body: JSON.stringify(task) }),
   staffTaskAssignments: () => request<StaffTaskAssignment[]>('/staff/task-assignments/?active=true'),
   createStaffTaskAssignment: (assignment: Pick<StaffTaskAssignment, 'worker' | 'task' | 'assigned_from'>) =>
@@ -1039,7 +1048,7 @@ export const api = {
   updateStaffTaskAssignment: (id: number, assignment: Partial<Pick<StaffTaskAssignment, 'is_active'>>) =>
     request<StaffTaskAssignment>(`/staff/task-assignments/${id}/`, { method: 'PATCH', body: JSON.stringify(assignment) }),
   staffTaskEntries: (period: string) => request<StaffTaskEntry[]>(`/staff/task-entries/?period=${encodeURIComponent(period)}`),
-  recordStaffTaskEntries: (date: string, records: Array<{ worker: number; task: number; hours: string }>) =>
+  recordStaffTaskEntries: (date: string, records: Array<{ worker: number; task: number; hours: string; units_worked: number }>) =>
     request<StaffTaskEntry[]>('/staff/task-entries/record_day/', { method: 'POST', body: JSON.stringify({ date, records }) }),
   createStaffMember: (worker: StaffMemberInput) => request<StaffMember>('/staff/workers/', { method: 'POST', body: JSON.stringify(worker) }),
   updateStaffMember: (id: number, worker: Partial<StaffMemberInput>) => request<StaffMember>(`/staff/workers/${id}/`, { method: 'PATCH', body: JSON.stringify(worker) }),

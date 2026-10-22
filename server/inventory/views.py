@@ -70,6 +70,13 @@ def task_pay_totals(entries):
             totals[entry.worker_id] = totals.get(entry.worker_id, Decimal('0')) + entry.pay_rate
         elif entry.pay_basis == StaffTask.PayBasis.HOURLY:
             totals[entry.worker_id] = totals.get(entry.worker_id, Decimal('0')) + entry.pay_rate * entry.hours
+        elif entry.pay_basis == StaffTask.PayBasis.TARGET:
+            earned = max(
+                (Decimal(str(tier['amount'])) for tier in entry.target_tiers
+                 if entry.units_worked >= tier['target_quantity']),
+                default=Decimal('0'),
+            )
+            totals[entry.worker_id] = totals.get(entry.worker_id, Decimal('0')) + earned
         else:
             monthly_rates.setdefault((entry.worker_id, entry.task_id), entry.pay_rate)
     for (worker_id, _task_id), rate in monthly_rates.items():
@@ -641,7 +648,12 @@ class StaffTaskViewSet(viewsets.ModelViewSet):
             action='staff.task_created',
             target_type='staff_task',
             target_id=str(task.id),
-            details={'name': task.name, 'pay_basis': task.pay_basis, 'pay_rate': str(task.pay_rate)},
+            details={
+                'name': task.name,
+                'pay_basis': task.pay_basis,
+                'pay_rate': str(task.pay_rate),
+                'target_tiers': task.target_tiers,
+            },
         )
 
     def perform_update(self, serializer):
@@ -688,6 +700,7 @@ def record_permanent_task_entries(worker, work_date, attended, user):
             task_name=task.name,
             pay_basis=task.pay_basis,
             pay_rate=task.pay_rate,
+            target_tiers=task.target_tiers,
             recorded_by=user,
         )
     refresh_daily_attendance_wage(worker, work_date)
@@ -770,6 +783,14 @@ class StaffTaskEntryViewSet(viewsets.ViewSet):
             raise ValidationError({'records': 'Submit a list of task assignments.'})
         serializer = StaffTaskEntryInputSerializer(data=rows, many=True)
         serializer.is_valid(raise_exception=True)
+        missing_target_units = {
+            index: {'units_worked': 'Enter the number of units completed for this task.'}
+            for index, (submitted, row) in enumerate(zip(rows, serializer.validated_data))
+            if row['task'].pay_basis == StaffTask.PayBasis.TARGET
+            and 'units_worked' not in submitted
+        }
+        if missing_target_units:
+            raise ValidationError({'records': missing_target_units})
         keys = [(row['worker'].id, row['task'].id) for row in serializer.validated_data]
         if len(keys) != len(set(keys)):
             raise ValidationError({'records': 'A worker can only be assigned to each task once per day.'})
@@ -794,8 +815,9 @@ class StaffTaskEntryViewSet(viewsets.ViewSet):
                 raise ValidationError({'task': f'{task.name} is inactive and cannot receive new work assignments.'})
             if existing:
                 existing.hours = row['hours']
+                existing.units_worked = row['units_worked']
                 existing.recorded_by = request.user
-                existing.save(update_fields=['hours', 'recorded_by'])
+                existing.save(update_fields=['hours', 'units_worked', 'recorded_by'])
                 saved_entries.append(existing)
             else:
                 saved_entries.append(StaffTaskEntry.objects.create(
@@ -806,6 +828,8 @@ class StaffTaskEntryViewSet(viewsets.ViewSet):
                     pay_basis=task.pay_basis,
                     pay_rate=task.pay_rate,
                     hours=row['hours'],
+                    target_tiers=task.target_tiers,
+                    units_worked=row['units_worked'],
                     recorded_by=request.user,
                 ))
         for worker_id, task_id in existing_entries.keys() - submitted_keys:

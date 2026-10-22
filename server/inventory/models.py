@@ -534,10 +534,12 @@ class StaffTask(models.Model):
         DAILY = 'daily', 'Daily'
         HOURLY = 'hourly', 'Hourly'
         MONTHLY = 'monthly', 'Monthly'
+        TARGET = 'target', 'Target-based'
 
     name = models.CharField(max_length=120, unique=True)
     pay_basis = models.CharField(max_length=12, choices=PayBasis.choices)
     pay_rate = models.DecimalField(max_digits=12, decimal_places=2)
+    target_tiers = models.JSONField(default=list, blank=True)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -583,6 +585,8 @@ class StaffTaskEntry(models.Model):
     pay_basis = models.CharField(max_length=12, choices=StaffTask.PayBasis.choices)
     pay_rate = models.DecimalField(max_digits=12, decimal_places=2)
     hours = models.DecimalField(max_digits=7, decimal_places=2, default=0)
+    target_tiers = models.JSONField(default=list, blank=True)
+    units_worked = models.PositiveIntegerField(default=0)
     recorded_by = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='staff_task_entries')
     created_at = models.DateTimeField(auto_now_add=True)
 
