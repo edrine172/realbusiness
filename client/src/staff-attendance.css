@@ -33,12 +33,13 @@
 .staff-attendance-target{color:#5f718a;font-size:9px;font-weight:600;white-space:nowrap}
 .staff-attendance-wage{width:150px;min-height:29px;padding:5px 8px;border:1px solid #dfe5ee;border-radius:5px;background:#fff;color:#29374d;font-size:10px}
 .staff-attendance-wage:disabled{background:#f3f5f8;color:#9aa5b3}
-.staff-inline-task{display:grid;grid-template-columns:minmax(120px,1fr) 68px auto;align-items:end;gap:5px;min-width:280px}
-.staff-inline-task .catalog-field{display:grid;gap:3px;margin:0;color:#71809a;font-size:7px}
+.staff-inline-task{display:grid;grid-template-columns:minmax(145px,1fr) minmax(135px,.9fr) auto;align-items:end;gap:6px;min-width:370px;white-space:nowrap}
+.staff-inline-task .catalog-field{display:grid;min-width:0;gap:3px;margin:0;color:#71809a;font-size:7px}
+.staff-inline-task .catalog-field>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .staff-inline-task .catalog-field select,.staff-inline-task .catalog-field input{width:100%;min-height:27px;padding:4px 6px;border:1px solid #dfe5ee;border-radius:5px;background:#fff;color:#34445b;font:inherit;font-size:8px}
 .staff-inline-task .catalog-field select:disabled,.staff-inline-task .catalog-field input:disabled{background:#f3f5f8;color:#9aa5b3}
 .staff-inline-task>.catalog-button{min-height:27px;padding:4px 8px;font-size:8px}
-.staff-inline-task-assigned{display:block;margin-top:4px;color:#36735c;font-size:7px}
+.staff-inline-task-assigned{display:inline-flex;margin:4px 6px 0 0;color:#36735c;font-size:7px;white-space:nowrap}
 .staff-attendance-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-top:9px;color:#77869b;font-size:8px}
 .staff-attendance-footer .catalog-button{flex:none}
 .staff-attendance-panel .staff-history-empty{padding:15px 8px;text-align:center}
