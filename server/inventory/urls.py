@@ -1,5 +1,6 @@
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
+from .backups import download_database_backup, restore_database_backup
 from .access_control import AccessDashboardViewSet, AccessGroupViewSet, AccessPermissionViewSet, AccessUserViewSet, access_csrf, access_login, access_logout, access_session, account_login, account_logout, account_register, account_session
 from .views import BottleCustomerPOViewSet, BottleProductViewSet, CategoryViewSet, ClientMaterialPOViewSet, ClientMaterialViewSet, CustomerViewSet, ExpenseBudgetViewSet, ExpenseViewSet, NotificationViewSet, PayrollRunViewSet, ProductViewSet, PurchaseViewSet, SaleViewSet, StaffAttendanceViewSet, StaffMemberViewSet, StaffTaskAssignmentViewSet, StaffTaskEntryViewSet, StaffTaskViewSet, StockMovementViewSet, SupplierViewSet, checkout, dashboard_summary, exchange_rates, expenses_bulk_upload, expenses_summary, inventory_adjustment, purchase_summary, reports_summary, sales_summary, staff_dashboard, system_settings
 
@@ -30,6 +31,8 @@ router.register('sales', SaleViewSet)
 router.register('movements', StockMovementViewSet)
 
 urlpatterns = [
+    path('system/backup/', download_database_backup, name='system-backup'),
+    path('system/backup/restore/', restore_database_backup, name='system-backup-restore'),
     path('access/csrf/', access_csrf, name='access-csrf'),
     path('access/login/', access_login, name='access-login'),
     path('access/session/', access_session, name='access-session'),

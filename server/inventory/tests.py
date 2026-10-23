@@ -1,4 +1,5 @@
 import json
+import gzip
 from io import BytesIO
 from decimal import Decimal
 from datetime import timedelta
@@ -10,6 +11,8 @@ from django.contrib.auth.models import Group, Permission
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
 from django.contrib.sessions.models import Session
+from django.core import serializers
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client
 from django.utils import timezone
 from rest_framework.test import APITestCase
@@ -54,6 +57,132 @@ class CategoryManagementTests(AdminAPITestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn('assigned to products', response.data['detail'])
         self.assertTrue(Category.objects.filter(pk=category.id).exists())
+
+
+class DatabaseBackupTests(AdminAPITestCase):
+    def test_superuser_can_download_compressed_database_fixture(self):
+        category = Category.objects.create(name='Backup category')
+        Product.objects.create(
+            sku='BACKUP-001',
+            name='Backup product',
+            category=category,
+            unit_price='12.50',
+        )
+        SystemSetting.objects.create(
+            key='backup_test_business_name',
+            value='Backup Test Business',
+            category='organization',
+        )
+
+        response = self.client.get('/api/system/backup/')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['Content-Type'], 'application/gzip')
+        self.assertIn('attachment; filename="stockpulse-database-backup-', response['Content-Disposition'])
+        self.assertEqual(response['Cache-Control'], 'private, no-store, max-age=0')
+        fixture = json.loads(gzip.decompress(b''.join(response.streaming_content)))
+        self.assertTrue(any(
+            row['model'] == 'inventory.product'
+            and row['fields']['sku'] == 'BACKUP-001'
+            for row in fixture
+        ))
+        self.assertTrue(any(
+            row['model'] == 'inventory.systemsetting'
+            and row['fields']['key'] == 'backup_test_business_name'
+            and row['fields']['value'] == 'Backup Test Business'
+            for row in fixture
+        ))
+        self.assertFalse(any(row['model'] == 'sessions.session' for row in fixture))
+
+    def test_non_superusers_cannot_download_database_backup(self):
+        regular_admin = get_user_model().objects.create_user(
+            username='regular-backup-admin',
+            password='test-password',
+            is_staff=True,
+        )
+        self.client.force_authenticate(user=regular_admin)
+
+        response = self.client.get('/api/system/backup/')
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_anonymous_users_cannot_download_database_backup(self):
+        self.client.force_authenticate(user=None)
+
+        response = self.client.get('/api/system/backup/')
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_restore_replaces_database_and_returns_pre_restore_safety_backup(self):
+        existing_category = Category.objects.create(name='Pre-restore category')
+        restored_category = Category.objects.create(name='Restored category')
+        fixture = serializers.serialize('json', [self.admin, restored_category]).encode('utf-8')
+        upload = SimpleUploadedFile('stockpulse-database-backup.json', fixture, content_type='application/json')
+
+        response = self.client.post('/api/system/backup/restore/', {'backup': upload}, format='multipart')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['Content-Type'], 'application/gzip')
+        self.assertIn('stockpulse-pre-restore-safety-backup-', response['Content-Disposition'])
+        restored_fixture = json.loads(gzip.decompress(b''.join(response.streaming_content)))
+        self.assertTrue(any(
+            row['model'] == 'inventory.category'
+            and row['fields']['name'] == existing_category.name
+            for row in restored_fixture
+        ))
+        self.assertEqual(response['X-Restored-Record-Count'], '2')
+        self.assertFalse(Category.objects.filter(name=existing_category.name).exists())
+        self.assertTrue(Category.objects.filter(name=restored_category.name).exists())
+
+    def test_failed_restore_rolls_back_database_changes(self):
+        existing_category = Category.objects.create(name='Must remain after failed restore')
+        fixture = json.dumps([{
+            'model': 'inventory.product',
+            'pk': 991,
+            'fields': {
+                'sku': 'RESTORE-INVALID',
+                'name': 'Invalid restored product',
+                'category': 999999,
+                'supplier': None,
+                'quantity': 1,
+                'reorder_level': 0,
+                'is_active': True,
+                'unit_price': '1.00',
+                'cost_price': '0.00',
+                'location': '',
+                'updated_at': '2026-01-01T00:00:00Z',
+                'created_at': '2026-01-01T00:00:00Z',
+            },
+        }]).encode('utf-8')
+        upload = SimpleUploadedFile('invalid-backup.json', fixture, content_type='application/json')
+
+        response = self.client.post('/api/system/backup/restore/', {'backup': upload}, format='multipart')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertTrue(Category.objects.filter(pk=existing_category.pk).exists())
+
+    def test_non_superusers_cannot_restore_database_backup(self):
+        regular_admin = get_user_model().objects.create_user(
+            username='regular-backup-restore-admin',
+            password='test-password',
+            is_staff=True,
+        )
+        self.client.force_authenticate(user=regular_admin)
+        upload = SimpleUploadedFile('backup.json', b'[]', content_type='application/json')
+
+        response = self.client.post('/api/system/backup/restore/', {'backup': upload}, format='multipart')
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_restore_rejects_backup_without_active_superuser(self):
+        existing_category = Category.objects.create(name='Must remain without admin backup')
+        fixture = serializers.serialize('json', [existing_category]).encode('utf-8')
+        upload = SimpleUploadedFile('backup-without-admin.json', fixture, content_type='application/json')
+
+        response = self.client.post('/api/system/backup/restore/', {'backup': upload}, format='multipart')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertTrue(Category.objects.filter(pk=existing_category.pk).exists())
 
 
 class ProductAvailabilityTests(AdminAPITestCase):

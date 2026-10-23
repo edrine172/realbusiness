@@ -114,6 +114,7 @@ default_cors_origins = [
 ]
 CORS_ALLOWED_ORIGINS = env_list('CORS_ALLOWED_ORIGINS', ','.join(default_cors_origins))
 CORS_ALLOWED_ORIGIN_REGEXES = env_list('CORS_ALLOWED_ORIGIN_REGEXES', r'^https://.*\.vercel\.app$')
+CORS_EXPOSE_HEADERS = ['Content-Disposition', 'X-Restored-Record-Count']
 CORS_ALLOW_CREDENTIALS = True
 CSRF_COOKIE_SAMESITE = 'Lax' if DEBUG else 'None'
 CSRF_COOKIE_SECURE = not DEBUG

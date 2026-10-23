@@ -932,6 +932,54 @@ export const api = {
   },
   accessLogout: () => request<{ ok: boolean }>('/access/logout/', { method: 'POST', body: JSON.stringify({}) }),
   accessDashboard: () => request<AccessDashboardData>('/access/dashboard/'),
+  async downloadSystemBackup() {
+    const response = await fetchGet(apiUrl('/system/backup/'), { credentials: 'include' });
+    if (!response.ok) {
+      const body = await response.text();
+      let message = `Database backup failed (HTTP ${response.status}).`;
+      if (body) {
+        try {
+          const payload = JSON.parse(body) as { detail?: unknown };
+          if (typeof payload.detail === 'string') message = payload.detail;
+        } catch (cause) {
+          if (!(cause instanceof SyntaxError)) throw cause;
+        }
+      }
+      throw new Error(message);
+    }
+    const disposition = response.headers.get('Content-Disposition') ?? '';
+    const filename = /filename="?([^";]+)"?/i.exec(disposition)?.[1] ?? 'stockpulse-database-backup.json.gz';
+    return { blob: await response.blob(), filename };
+  },
+  async restoreSystemBackup(file: File) {
+    const form = new FormData();
+    form.append('backup', file);
+    const response = await fetch(apiUrl('/system/backup/restore/'), {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'X-CSRFToken': accessCsrfToken },
+      body: form,
+    });
+    if (!response.ok) {
+      const body = await response.text();
+      let message = `Database restore failed (HTTP ${response.status}).`;
+      if (body) {
+        try {
+          message = formatApiErrorBody(JSON.parse(body) as unknown, response.status);
+        } catch (cause) {
+          if (!(cause instanceof SyntaxError)) throw cause;
+        }
+      }
+      throw new Error(message);
+    }
+    const disposition = response.headers.get('Content-Disposition') ?? '';
+    const filename = /filename="?([^";]+)"?/i.exec(disposition)?.[1] ?? 'stockpulse-pre-restore-safety-backup.json.gz';
+    return {
+      blob: await response.blob(),
+      filename,
+      restoredRecords: Number(response.headers.get('X-Restored-Record-Count') ?? 0),
+    };
+  },
   notifications: () => request<AppNotification[]>('/notifications/'),
   markNotificationRead: (id: number) => request<AppNotification>(`/notifications/${id}/read/`, { method: 'POST', body: JSON.stringify({}) }),
   markAllNotificationsRead: () => request<{ updated: number }>('/notifications/read_all/', { method: 'POST', body: JSON.stringify({}) }),
