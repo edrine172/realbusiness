@@ -8,6 +8,8 @@ from unittest.mock import patch
 from django.core.cache import cache
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group, Permission
+from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
 from django.contrib.sessions.models import Session
@@ -2506,3 +2508,75 @@ class AccessControlDashboardTests(APITestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data['revoked_sessions'], 1)
         self.assertFalse(Session.objects.filter(session_key=session_key).exists())
+
+
+class BootstrapSuperuserCommandTests(APITestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username='lord',
+            password='secure-test-password',
+            is_staff=True,
+        )
+
+    def bootstrap(self, username='lord', confirmation='lord'):
+        call_command(
+            'bootstrap_superuser',
+            username=username,
+            confirm_username=confirmation,
+            verbosity=0,
+        )
+
+    def test_bootstraps_existing_active_user_and_records_audit_event(self):
+        self.bootstrap()
+
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.is_active)
+        self.assertTrue(self.user.is_staff)
+        self.assertTrue(self.user.is_superuser)
+        self.assertTrue(self.user.check_password('secure-test-password'))
+        self.assertTrue(SecurityAuditEvent.objects.filter(
+            actor=self.user,
+            action='user.superuser.bootstrapped',
+            target_id=str(self.user.pk),
+        ).exists())
+
+    def test_requires_exact_username_confirmation(self):
+        with self.assertRaises(CommandError):
+            self.bootstrap(confirmation='someone-else')
+
+        self.user.refresh_from_db()
+        self.assertFalse(self.user.is_superuser)
+
+    def test_refuses_to_create_an_additional_superuser(self):
+        get_user_model().objects.create_superuser(
+            username='existing-admin',
+            password='secure-test-password',
+        )
+
+        with self.assertRaises(CommandError):
+            self.bootstrap()
+
+        self.user.refresh_from_db()
+        self.assertFalse(self.user.is_superuser)
+
+    def test_refuses_missing_or_inactive_accounts(self):
+        with self.assertRaises(CommandError):
+            self.bootstrap(username='missing-user', confirmation='missing-user')
+
+        self.user.is_active = False
+        self.user.save(update_fields=['is_active'])
+        with self.assertRaises(CommandError):
+            self.bootstrap()
+
+        self.user.refresh_from_db()
+        self.assertFalse(self.user.is_superuser)
+
+    def test_existing_superuser_is_a_safe_no_op(self):
+        self.user.is_superuser = True
+        self.user.save(update_fields=['is_superuser'])
+
+        self.bootstrap()
+
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.is_superuser)
+        self.assertEqual(SecurityAuditEvent.objects.count(), 0)

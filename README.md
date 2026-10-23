@@ -46,6 +46,16 @@ The Django API uses PostgreSQL through `DATABASE_URL`; connect Render directly t
 
 For an existing Supabase project, the database credentials are available from its **Connect** dialog. Never share the connection string or database password in chat or source control. To bring existing SQLite records over, perform a separate data export/import after the connection is verified.
 
+### Bootstrap the first admin on Render's free plan
+
+Render Shell is unavailable on free web services. If no active Django superuser exists, and the target account already exists and is active in the deployed database, temporarily change the Render service start command to:
+
+```sh
+python manage.py migrate --noinput && python manage.py bootstrap_superuser --username lord --confirm-username lord && gunicorn config.wsgi:application --bind 0.0.0.0:$PORT
+```
+
+Replace both `lord` values with the exact deployed username. Save the command and deploy. The guarded command promotes only that existing active user, only when there is no other active superuser; it does not create accounts, change passwords, or transfer local database data. If it fails, the normal server startup will not continue, so verify the account exists and that no active superuser already exists before changing the command. Once Render logs confirm the promotion and the service is healthy, restore the normal start command above (without `bootstrap_superuser`) and redeploy. Do not leave the bootstrap command enabled for routine deployments. If a superuser already exists, use **Users & Access** in the admin panel to grant the account access instead.
+
 The root `npm start` command also forwards to the client Vite server. Start the Django API separately using the server steps above.
 
 ## API routes
