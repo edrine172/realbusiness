@@ -897,36 +897,126 @@ class StaffAttendanceViewSet(viewsets.ViewSet):
         if len(worker_ids) != len(set(worker_ids)):
             raise ValidationError({'records': 'A worker can only be recorded once per day.'})
 
-        saved_records = []
-        for row in serializer.validated_data:
-            worker = row['worker']
+        workers_by_id = {row['worker'].id: row['worker'] for row in serializer.validated_data}
+        for worker in workers_by_id.values():
             if worker.status != StaffMember.Status.ACTIVE:
                 raise ValidationError({'worker': f'{worker.full_name} must be an active worker.'})
+
+        attendance_rows = []
+        for row in serializer.validated_data:
+            worker = row['worker']
             attended = row['attended']
             output_quantity = row['output_quantity']
-            attendance, _ = StaffAttendance.objects.update_or_create(
+            attendance_rows.append(StaffAttendance(
                 worker=worker,
                 date=attendance_date,
-                defaults={
-                    'attended': attended,
-                    'output_quantity': output_quantity,
-                    'daily_wage_override': row['daily_wage_override'],
-                    'daily_wage': daily_attendance_wage(attendance_date, attended, output_quantity, row['daily_wage_override'])
-                    if worker.pay_basis == StaffMember.PayBasis.DAILY else Decimal('0.00'),
-                    'recorded_by': request.user,
-                },
+                attended=attended,
+                output_quantity=output_quantity,
+                daily_wage_override=row['daily_wage_override'],
+                daily_wage=daily_attendance_wage(
+                    attendance_date,
+                    attended,
+                    output_quantity,
+                    row['daily_wage_override'],
+                ) if worker.pay_basis == StaffMember.PayBasis.DAILY else Decimal('0.00'),
+                recorded_by=request.user,
+            ))
+
+        if attendance_rows:
+            StaffAttendance.objects.bulk_create(
+                attendance_rows,
+                update_conflicts=True,
+                update_fields=[
+                    'attended',
+                    'output_quantity',
+                    'daily_wage_override',
+                    'daily_wage',
+                    'recorded_by',
+                    'updated_at',
+                ],
+                unique_fields=['worker', 'date'],
             )
-            record_permanent_task_entries(worker, attendance_date, attended, request.user)
-            attendance.refresh_from_db(fields=['daily_wage'])
-            attendance.worker = worker
-            saved_records.append(attendance)
+
+        worker_ids = list(workers_by_id)
+        attended_worker_ids = [
+            row['worker'].id for row in serializer.validated_data if row['attended']
+        ]
+        absent_worker_ids = list(set(worker_ids) - set(attended_worker_ids))
+        if absent_worker_ids:
+            StaffTaskEntry.objects.filter(
+                worker_id__in=absent_worker_ids,
+                date=attendance_date,
+            ).delete()
+
+        existing_entries = {
+            (entry.worker_id, entry.task_id): entry
+            for entry in StaffTaskEntry.objects.filter(
+                worker_id__in=attended_worker_ids,
+                date=attendance_date,
+            )
+        }
+        assignments = StaffTaskAssignment.objects.filter(
+            worker_id__in=attended_worker_ids,
+            is_active=True,
+            assigned_from__lte=attendance_date,
+            task__is_active=True,
+        ).select_related('worker', 'task')
+        entries_to_create = []
+        entries_to_update = []
+        for assignment in assignments:
+            task = assignment.task
+            key = (assignment.worker_id, task.id)
+            existing = existing_entries.get(key)
+            if existing:
+                if existing.assignment_type != StaffTaskEntry.AssignmentType.PERMANENT:
+                    existing.assignment_type = StaffTaskEntry.AssignmentType.PERMANENT
+                    entries_to_update.append(existing)
+                continue
+            entries_to_create.append(StaffTaskEntry(
+                worker=assignment.worker,
+                task=task,
+                date=attendance_date,
+                assignment_type=StaffTaskEntry.AssignmentType.PERMANENT,
+                task_name=task.name,
+                pay_basis=task.pay_basis,
+                pay_rate=task.pay_rate,
+                target_tiers=task.target_tiers,
+                recorded_by=request.user,
+            ))
+
+        if entries_to_update:
+            StaffTaskEntry.objects.bulk_update(entries_to_update, ['assignment_type'])
+        if entries_to_create:
+            StaffTaskEntry.objects.bulk_create(entries_to_create)
+
+        workers_with_task_entries = set(StaffTaskEntry.objects.filter(
+            worker_id__in=worker_ids,
+            date=attendance_date,
+        ).values_list('worker_id', flat=True))
+        saved_records = list(StaffAttendance.objects.filter(
+            worker_id__in=worker_ids,
+            date=attendance_date,
+        ).select_related('worker'))
+        for attendance in saved_records:
+            if attendance.worker.pay_basis == StaffMember.PayBasis.DAILY:
+                attendance.daily_wage = (
+                    daily_attendance_wage(
+                        attendance_date,
+                        True,
+                        attendance.output_quantity,
+                        attendance.daily_wage_override,
+                    )
+                    if attendance.attended and attendance.worker_id not in workers_with_task_entries
+                    else Decimal('0.00')
+                )
+        StaffAttendance.objects.bulk_update(saved_records, ['daily_wage'])
 
         SecurityAuditEvent.objects.create(
             actor=request.user,
             action='staff.attendance_recorded',
             target_type='staff_attendance',
             target_id=attendance_date.isoformat(),
-            details={'workers_recorded': len(saved_records)},
+            details={'workers_recorded': len(attendance_rows)},
         )
         return Response(StaffAttendanceSerializer(saved_records, many=True).data)
 

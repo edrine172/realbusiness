@@ -681,6 +681,53 @@ class StaffPayrollTests(APITestCase):
             second_worker.data['id'],
         })
 
+    def test_bulk_attendance_save_handles_many_permanent_assignments_efficiently(self):
+        workers = [
+            self.create_worker(
+                full_name=f'Worker {index}',
+                email=f'worker{index}@example.test',
+            ).data
+            for index in range(10)
+        ]
+        task = self.client.post('/api/staff/tasks/', {
+            'name': 'Bulk attendance task',
+            'pay_basis': 'daily',
+            'pay_rate': '250.00',
+        }, format='json')
+        self.assertEqual(task.status_code, 201)
+        for worker in workers:
+            assignment = self.client.post('/api/staff/task-assignments/', {
+                'worker': worker['id'],
+                'task': task.data['id'],
+                'assigned_from': '2025-02-01',
+            }, format='json')
+            self.assertEqual(assignment.status_code, 201)
+
+        payload = {
+            'date': '2025-02-04',
+            'records': [{'worker': worker['id'], 'attended': True} for worker in workers],
+        }
+        with CaptureQueriesContext(connection) as queries:
+            attendance = self.client.post(
+                '/api/staff/attendance/record_day/',
+                payload,
+                format='json',
+            )
+        self.assertEqual(attendance.status_code, 200, attendance.data)
+        self.assertLess(len(queries), 45)
+        self.assertEqual(len(attendance.data), len(workers))
+
+        repeated = self.client.post('/api/staff/attendance/record_day/', payload, format='json')
+        self.assertEqual(repeated.status_code, 200, repeated.data)
+        self.assertEqual(
+            StaffAttendance.objects.filter(date='2025-02-04').count(),
+            len(workers),
+        )
+        self.assertEqual(
+            StaffTaskEntry.objects.filter(date='2025-02-04', task_id=task.data['id']).count(),
+            len(workers),
+        )
+
     def test_permanent_assignment_credits_attended_day_from_selected_start_date(self):
         worker = self.create_worker()
         task = self.client.post('/api/staff/tasks/', {
