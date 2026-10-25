@@ -8,6 +8,7 @@
 .staff-attendance-selected-date strong{color:#34445b;font-size:10px}
 .staff-attendance-summary{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 10px;margin-bottom:8px;border-radius:5px;background:#f4f7fc;color:#697991;font-size:9px}
 .staff-attendance-summary strong{color:#2563c7;font-size:11px}
+.staff-attendance-summary strong small{display:block;margin-top:3px;color:#697991;font-size:8px;font-weight:500}
 .staff-calendar{margin:8px 0 12px;padding:9px;border:1px solid #e8edf5;border-radius:6px;background:#fbfcfe}
 .staff-calendar-weekdays,.staff-calendar-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:5px}
 .staff-calendar-weekdays{margin-bottom:5px}

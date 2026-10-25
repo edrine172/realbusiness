@@ -141,6 +141,20 @@ function DailyAttendancePanel({ period, workers, locked, selectedWorkerId, month
   }, {});
   const selectedDateRecords = recordsByDate[date] ?? [];
   const selectedWorkerRecord = selectedWorker ? selectedDateRecords.find((record) => record.worker === selectedWorker.id) : undefined;
+  const selectedDateTaskEntries = taskEntries.filter((entry) => entry.date === date);
+  const selectedWorkerTaskEntries = selectedWorker
+    ? selectedDateTaskEntries.filter((entry) => entry.worker === selectedWorker.id)
+    : [];
+  const selectedWorkerTaskPay = selectedWorkerTaskEntries.reduce(
+    (total, entry) => total + taskEntryPay(entry, taskEntries),
+    0,
+  );
+  const selectedWorkerAttendancePay = selectedWorker?.pay_basis === 'daily'
+    && selectedWorkerRecord?.attended
+    && !selectedWorkerTaskEntries.length
+    ? Number(selectedWorkerRecord.daily_wage)
+    : 0;
+  const selectedWorkerDayTotal = selectedWorkerTaskPay + selectedWorkerAttendancePay;
   const selectedWorkerAttendance = selectedWorker
     ? attendanceRecords.filter((record) => record.worker === selectedWorker.id).sort((first, second) => first.date.localeCompare(second.date))
     : [];
@@ -158,13 +172,18 @@ function DailyAttendancePanel({ period, workers, locked, selectedWorkerId, month
   const taskAssignedWorkerIds = new Set(taskEntries
     .filter((entry) => entry.date === date)
     .map((entry) => entry.worker));
+  const selectedDateTaskPay = selectedDateTaskEntries.reduce(
+    (total, entry) => total + taskEntryPay(entry, taskEntries),
+    0,
+  );
   const presentCount = attendanceWorkers.filter((worker) => drafts[worker.id]?.attended).length;
-  const dailyTotal = dailyWageWorkers.reduce((total, worker) => {
+  const dailyAttendanceTotal = dailyWageWorkers.reduce((total, worker) => {
     const draft = drafts[worker.id] ?? { attended: false, output_quantity: '', daily_wage_override: '' };
     return total + (taskAssignedWorkerIds.has(worker.id)
       ? 0
       : dailyAttendanceWage(date, draft.attended, draft.output_quantity, worker.pay_basis, draft.daily_wage_override));
   }, 0);
+  const dailyTotal = dailyAttendanceTotal + selectedDateTaskPay;
   const monthTotal = periodWorkers.filter((worker) => worker.pay_basis === 'daily').reduce((total, worker) => total + Number(worker.period_gross || 0), 0);
   const activeTasks = availableTasks.filter((task) => task.is_active);
 
@@ -323,7 +342,7 @@ function DailyAttendancePanel({ period, workers, locked, selectedWorkerId, month
       <div><span className="staff-section-icon"><CalendarDays size={14}/></span><div><h2>Daily attendance &amp; wages</h2><p>{selectedWorker ? `${selectedWorker.full_name} · ${selectedWorker.pay_basis === 'daily' ? `month to date ${currency(selectedWorkerMonthTotal)}` : selectedWorker.pay_basis_display}` : `Daily wages month to date: ${currency(monthTotal)}`}</p></div></div>
       <div className="staff-attendance-header-actions"><label className="staff-attendance-month-select"><span>Attendance month</span><input aria-label="Select attendance month and year" type="month" value={period} onChange={(event) => { if (event.target.value) onPeriodChange(event.target.value); }}/></label><div className="staff-attendance-selected-date"><span>Selected day</span><strong>{new Date(`${date}T00:00:00`).toLocaleDateString('en-UG', { weekday: 'long', day: 'numeric', month: 'long' })}</strong></div></div>
     </div>
-    <div className="staff-attendance-summary"><span>{selectedWorker ? selectedWorkerRecord ? `${selectedWorker.full_name}: ${selectedWorkerRecord.attended ? 'Worked' : 'Did not work'} on this date` : selectedWorker.hire_date > date ? `${selectedWorker.full_name} was not employed yet` : `No attendance entry for ${selectedWorker.full_name} on this date` : selectedDateRecords.length ? `${presentCount} of ${attendanceWorkers.length} workers marked present` : 'Attendance has not been recorded for this day'}</span><strong>{selectedWorker ? selectedWorkerRecord ? currency(selectedWorkerRecord.daily_wage) : '—' : currency(dailyTotal)} for this day</strong></div>
+    <div className="staff-attendance-summary"><span>{selectedWorker ? selectedWorkerRecord ? `${selectedWorker.full_name}: ${selectedWorkerRecord.attended ? 'Worked' : 'Did not work'} on this date` : selectedWorker.hire_date > date ? `${selectedWorker.full_name} was not employed yet` : `No attendance entry for ${selectedWorker.full_name} on this date` : selectedDateRecords.length ? `${presentCount} of ${attendanceWorkers.length} workers marked present` : 'Attendance has not been recorded for this day'}</span><strong>{currency(selectedWorker ? selectedWorkerDayTotal : dailyTotal)} for this day{(selectedWorker ? selectedWorkerTaskPay : selectedDateTaskPay) > 0 && <small>{currency(selectedWorker ? selectedWorkerTaskPay : selectedDateTaskPay)} task pay included</small>}</strong></div>
     <label className="staff-worker-search"><Search size={14}/><input type="search" value={workerSearch} onChange={(event) => setWorkerSearch(event.target.value)} placeholder="Search workers by name or employee number" aria-label="Search workers by name or employee number"/>{workerSearch && <button type="button" onClick={() => setWorkerSearch('')} aria-label="Clear worker search"><X size={13}/></button>}</label>
     <div className="staff-attendance-workers" role="group" aria-label="Select a worker calendar"><button type="button" className={!selectedWorkerId ? 'is-selected' : ''} aria-pressed={!selectedWorkerId} onClick={() => onSelectedWorkerChange(null)}>All workers</button>{filteredPeriodWorkers.map((worker) => <button type="button" key={worker.id} className={selectedWorkerId === worker.id ? 'is-selected' : ''} aria-pressed={selectedWorkerId === worker.id} onClick={() => onSelectedWorkerChange(worker.id)}><strong>{worker.full_name}</strong><small>{worker.job_title}</small></button>)}{searchTerm && !filteredPeriodWorkers.length && <span className="staff-worker-search-empty">No workers found.</span>}</div>
     {selectedWorker && <section className="staff-worker-month-earnings" aria-label={`${selectedWorker.full_name} earnings for ${periodLabel(period)}`}>
