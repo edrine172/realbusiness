@@ -23,7 +23,7 @@ async function fetchWithNetworkRetries(url: string, options?: RequestInit) {
 }
 
 async function fetchGet(url: string, options?: RequestInit) {
-  return fetchWithNetworkRetries(url, { ...options, method: 'GET' });
+  return fetchWithNetworkRetries(url, { ...options, method: 'GET', cache: 'no-store' });
 }
 
 function apiUrl(path: string) {

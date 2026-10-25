@@ -735,12 +735,24 @@ class StaffPayrollTests(APITestCase):
             'records': [{'worker': worker.data['id'], 'attended': True, 'output_quantity': 14}],
         }, format='json')
         self.assertEqual(non_task_day.status_code, 200)
-        attendance_by_date = {
-            record['date']: record
-            for record in self.client.get('/api/staff/attendance/?period=2025-02').data
-        }
+        attendance_records = self.client.get('/api/staff/attendance/?period=2025-02')
+        self.assertEqual(attendance_records.status_code, 200)
+        attendance_by_date = {record['date']: record for record in attendance_records.data}
+        self.assertEqual(
+            self.client.get('/api/staff/attendance/?period=2025-02').data,
+            attendance_records.data,
+        )
         self.assertEqual(attendance_by_date['2025-02-03']['daily_wage'], '0.00')
         self.assertEqual(attendance_by_date['2025-02-04']['daily_wage'], '6000.00')
+        task_entries = self.client.get('/api/staff/task-entries/?period=2025-02')
+        self.assertEqual(task_entries.status_code, 200)
+        self.assertEqual(len(task_entries.data), 1)
+        self.assertEqual(task_entries.data[0]['worker'], worker.data['id'])
+        self.assertEqual(task_entries.data[0]['task'], task.data['id'])
+        self.assertEqual(
+            self.client.get('/api/staff/task-entries/?period=2025-02').data,
+            task_entries.data,
+        )
 
         payroll = self.client.post('/api/staff/payroll-runs/generate/', {'period': '2025-02'}, format='json')
         self.assertEqual(payroll.status_code, 201)

@@ -16,6 +16,37 @@ type StaffFormValues = Omit<StaffMemberInput, 'hire_date'> & { hire_date: string
 
 const periodLabel = (period: string) => new Date(`${period}-01T00:00:00`).toLocaleDateString('en-UG', { month: 'long', year: 'numeric' });
 const thisPeriod = () => { const now = new Date(); return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`; };
+const payrollPeriodStorageKey = 'stockpulse-payroll-period';
+const payrollDateStorageKey = (period: string) => `stockpulse-payroll-date-${period}`;
+const payrollWorkerStorageKey = 'stockpulse-payroll-worker';
+const savedPayrollPeriod = () => {
+  try {
+    const period = localStorage.getItem(payrollPeriodStorageKey);
+    return period && /^\d{4}-(0[1-9]|1[0-2])$/.test(period) ? period : thisPeriod();
+  } catch {
+    return thisPeriod();
+  }
+};
+const savedPayrollDate = (period: string) => {
+  try {
+    const date = localStorage.getItem(payrollDateStorageKey(period));
+    if (date && date.startsWith(`${period}-`) && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      const [, month, day] = date.split('-').map(Number);
+      if (day > 0 && day <= new Date(Number(period.slice(0, 4)), month, 0).getDate()) return date;
+    }
+  } catch {
+    return `${period}-01`;
+  }
+  return `${period}-01`;
+};
+const savedPayrollWorker = () => {
+  try {
+    const workerId = Number(localStorage.getItem(payrollWorkerStorageKey));
+    return Number.isInteger(workerId) && workerId > 0 ? workerId : null;
+  } catch {
+    return null;
+  }
+};
 const dateLabel = (date: string | null) => date ? new Date(date).toLocaleString('en-UG', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : 'Not yet paid';
 const isSunday = (date: string) => { const [year, month, day] = date.split('-').map(Number); return new Date(year, month - 1, day).getDay() === 0; };
 const dailyAttendanceWage = (date: string, attended: boolean, outputQuantity: string | number, payBasis: StaffMember['pay_basis'], wageOverride = '') => {
@@ -104,7 +135,7 @@ function DailyAttendancePanel({ period, workers, locked, selectedWorkerId, month
   onPeriodChange: (period: string) => void;
   onSaved: () => Promise<void>;
 }) {
-  const [date, setDate] = useState(`${period}-01`);
+  const [date, setDate] = useState(() => savedPayrollDate(period));
   const draftDateRef = useRef(date);
   const [workerSearch, setWorkerSearch] = useState('');
   const [attendanceRecords, setAttendanceRecords] = useState<StaffAttendance[]>([]);
@@ -187,7 +218,15 @@ function DailyAttendancePanel({ period, workers, locked, selectedWorkerId, month
   const monthTotal = periodWorkers.filter((worker) => worker.pay_basis === 'daily').reduce((total, worker) => total + Number(worker.period_gross || 0), 0);
   const activeTasks = availableTasks.filter((task) => task.is_active);
 
-  useEffect(() => { setDate(`${period}-01`); onSelectedWorkerChange(null); }, [period, onSelectedWorkerChange]);
+  useEffect(() => { setDate(savedPayrollDate(period)); }, [period]);
+  useEffect(() => {
+    if (!date.startsWith(`${period}-`)) return;
+    try {
+      localStorage.setItem(payrollDateStorageKey(period), date);
+    } catch {
+      // The calendar still works when browser storage is unavailable.
+    }
+  }, [date]);
 
   useEffect(() => {
     if (selectedWorkerId !== null && !filteredPeriodWorkers.some((worker) => worker.id === selectedWorkerId)) {
@@ -809,12 +848,12 @@ export default function StaffDashboard({ onNavigate, onSignOut }: { onNavigate: 
   const [loading, setLoading] = useState(true);
   const [savingRun, setSavingRun] = useState(false);
   const [showWorkerRates, setShowWorkerRates] = useState(false);
-  const [period, setPeriod] = useState(thisPeriod);
+  const [period, setPeriod] = useState(savedPayrollPeriod);
   const [search, setSearch] = useState('');
   const [departmentFilter, setDepartmentFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
   const [workerForm, setWorkerForm] = useState<StaffMember | null | undefined>(undefined);
-  const [selectedWorkerId, setSelectedWorkerId] = useState<number | null>(null);
+  const [selectedWorkerId, setSelectedWorkerId] = useState<number | null>(savedPayrollWorker);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const attendancePanelRef = useRef<HTMLElement>(null);
@@ -834,7 +873,22 @@ export default function StaffDashboard({ onNavigate, onSignOut }: { onNavigate: 
     } finally { setLoading(false); }
   }
 
-  useEffect(() => { void loadDashboard(); }, [period]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(payrollPeriodStorageKey, period);
+    } catch {
+      // The dashboard still works when browser storage is unavailable.
+    }
+    void loadDashboard();
+  }, [period]);
+  useEffect(() => {
+    try {
+      if (selectedWorkerId === null) localStorage.removeItem(payrollWorkerStorageKey);
+      else localStorage.setItem(payrollWorkerStorageKey, String(selectedWorkerId));
+    } catch {
+      // The dashboard still works when browser storage is unavailable.
+    }
+  }, [selectedWorkerId]);
 
   async function signIn(username: string, password: string) {
     setError('');
