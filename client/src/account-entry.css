@@ -35,6 +35,9 @@
 .account-entry-card-footer svg{flex:none;color:#2b9673}
 .account-entry-access-note{display:flex;align-items:center;gap:6px;margin:0;color:#647487;font-size:7px}
 .account-entry-access-note svg{color:#235dd8}
+.account-entry-admin-link{display:inline-flex;align-items:center;gap:5px;color:#235dd8;font-size:8px;font-weight:700;text-decoration:none}
+.account-entry-admin-link:hover{text-decoration:underline}
+.account-entry-admin-link:focus-visible{outline:3px solid #235dd844;outline-offset:2px}
 .account-entry-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 clamp(18px,4vw,52px);border-top:1px solid #e4e9ef;background:#fff;color:#758394;font-size:7px}
 .catalog-top-actions .workspace-signout{display:grid}
 @media(max-width:760px){.account-entry{min-height:100svh;grid-template-rows:50px 1fr 36px}.account-entry-header{padding-inline:14px}.account-entry-content{padding:22px 14px;gap:10px}.account-entry-card{padding:22px 20px 16px}.account-entry-card h1{font-size:21px}.account-entry-footer{padding-inline:14px}.catalog-top-actions .workspace-signout{display:grid!important}}

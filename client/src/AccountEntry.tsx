@@ -101,6 +101,7 @@ export default function AccountEntry({ onBack, onAuthenticated, initialMode = 's
         <div className="account-entry-card-footer"><ShieldCheck size={14}/><span>{mode === 'sign-in' ? 'Your workspace account is protected by a secure session.' : 'New accounts receive full workspace access immediately.'}</span></div>
       </div>
       <p className="account-entry-access-note"><UserRoundPlus size={13}/> Administrator tools require an authorized account.</p>
+      {mode === 'sign-up' && <a className="account-entry-admin-link" href="/admin">Administrator sign-in <ArrowRight size={13}/></a>}
     </section>
     <footer className="account-entry-footer"><span>© 2026 StockPulse Operations</span><span>INVENTORY · WORKFORCE · FINANCE</span></footer>
   </main>;
