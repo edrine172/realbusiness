@@ -952,14 +952,27 @@ export const api = {
     return { blob: await response.blob(), filename };
   },
   async restoreSystemBackup(file: File) {
+    const csrfResponse = await fetchGet(apiUrl('/access/csrf/'), { credentials: 'include' });
+    if (!csrfResponse.ok) throw csrfInitializationError(csrfResponse);
+    const csrfData = await csrfResponse.json() as { csrf_token: string };
+    accessCsrfToken = csrfData.csrf_token;
+
     const form = new FormData();
     form.append('backup', file);
-    const response = await fetch(apiUrl('/system/backup/restore/'), {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'X-CSRFToken': accessCsrfToken },
-      body: form,
-    });
+    let response: Response;
+    try {
+      response = await fetch(apiUrl('/system/backup/restore/'), {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'X-CSRFToken': accessCsrfToken },
+        body: form,
+      });
+    } catch (cause) {
+      if (cause instanceof TypeError) {
+        throw new Error('Could not connect to the StockPulse backup API. Check that the Render service is available and try again.');
+      }
+      throw cause;
+    }
     if (!response.ok) {
       const body = await response.text();
       let message = `Database restore failed (HTTP ${response.status}).`;
