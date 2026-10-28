@@ -1096,8 +1096,8 @@ export const api = {
     request<Expense[]>('/expenses/bulk-upload/', { method: 'POST', body: JSON.stringify({ expenses }) }),
   staffDashboard: (period?: string) => request<StaffDashboardData>(`/staff/dashboard/${period ? `?period=${encodeURIComponent(period)}` : ''}`),
   staffAttendance: (period: string) => request<StaffAttendance[]>(`/staff/attendance/?period=${encodeURIComponent(period)}`),
-  recordStaffAttendance: (date: string, records: Array<{ worker: number; attended: boolean; output_quantity: number; daily_wage_override?: number | null }>) =>
-    request<StaffAttendance[]>('/staff/attendance/record_day/', { method: 'POST', body: JSON.stringify({ date, records }) }, 'required', true),
+  recordStaffAttendance: (date: string, records: Array<{ worker: number; attended: boolean; output_quantity: number; daily_wage_override?: number | null }>, skipConfirmation = false) =>
+    request<StaffAttendance[]>('/staff/attendance/record_day/', { method: 'POST', body: JSON.stringify({ date, records }) }, skipConfirmation ? 'skip' : 'required', true),
   staffTasks: () => request<StaffTask[]>('/staff/tasks/'),
   createStaffTask: (task: Pick<StaffTask, 'name' | 'pay_basis' | 'pay_rate' | 'target_tiers'>) =>
     request<StaffTask>('/staff/tasks/', { method: 'POST', body: JSON.stringify(task) }),
@@ -1109,8 +1109,8 @@ export const api = {
   updateStaffTaskAssignment: (id: number, assignment: Partial<Pick<StaffTaskAssignment, 'is_active'>>) =>
     request<StaffTaskAssignment>(`/staff/task-assignments/${id}/`, { method: 'PATCH', body: JSON.stringify(assignment) }),
   staffTaskEntries: (period: string) => request<StaffTaskEntry[]>(`/staff/task-entries/?period=${encodeURIComponent(period)}`),
-  recordStaffTaskEntries: (date: string, records: Array<{ worker: number; task: number; hours: string; units_worked: number }>) =>
-    request<StaffTaskEntry[]>('/staff/task-entries/record_day/', { method: 'POST', body: JSON.stringify({ date, records }) }),
+  recordStaffTaskEntries: (date: string, records: Array<{ worker: number; task: number; hours: string; units_worked: number }>, skipConfirmation = false) =>
+    request<StaffTaskEntry[]>('/staff/task-entries/record_day/', { method: 'POST', body: JSON.stringify({ date, records }) }, skipConfirmation ? 'skip' : 'required', true),
   createStaffMember: (worker: StaffMemberInput) => request<StaffMember>('/staff/workers/', { method: 'POST', body: JSON.stringify(worker) }),
   updateStaffMember: (id: number, worker: Partial<StaffMemberInput>) => request<StaffMember>(`/staff/workers/${id}/`, { method: 'PATCH', body: JSON.stringify(worker) }),
   generatePayrollRun: (period: string) => request<PayrollRun>('/staff/payroll-runs/generate/', { method: 'POST', body: JSON.stringify({ period }) }),

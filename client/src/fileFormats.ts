@@ -50,3 +50,36 @@ export async function downloadSpreadsheet(filename: string, sheetName: string, r
   XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
   XLSX.writeFile(workbook, filename);
 }
+
+export async function readSpreadsheetWorkbook(file: File): Promise<Array<{ name: string; rows: string[][] }>> {
+  const XLSX = await import('xlsx');
+  const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array', cellDates: true });
+  return workbook.SheetNames.map((name) => {
+    const sheet = workbook.Sheets[name];
+    const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: '', raw: false });
+    return {
+      name,
+      rows: rows.map((row) => row.map((value) => {
+        if (value instanceof Date) {
+          const year = value.getFullYear();
+          const month = String(value.getMonth() + 1).padStart(2, '0');
+          const day = String(value.getDate()).padStart(2, '0');
+          return `${year}-${month}-${day}`;
+        }
+        return String(value);
+      })),
+    };
+  });
+}
+
+export async function downloadSpreadsheetWorkbook(
+  filename: string,
+  sheets: Array<{ name: string; rows: unknown[][] }>,
+) {
+  const XLSX = await import('xlsx');
+  const workbook = XLSX.utils.book_new();
+  sheets.forEach(({ name, rows }) => {
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(rows), name);
+  });
+  XLSX.writeFile(workbook, filename);
+}

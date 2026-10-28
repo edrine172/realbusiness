@@ -1,0 +1,36 @@
+{
+  "generatedAt": "2026-10-28T00:00:00Z",
+  "generatedOnPlatform": "win32",
+  "projectType": "webapp",
+  "setup": [],
+  "assertions": [
+    {
+      "name": "client-production-build",
+      "kind": "process",
+      "command": "npm",
+      "args": ["run", "build"],
+      "verificationMethod": "exit-code",
+      "expected": "0",
+      "timeoutSeconds": 300
+    },
+    {
+      "name": "tests-pass",
+      "kind": "process",
+      "command": "npm",
+      "args": ["test"],
+      "verificationMethod": "test-results",
+      "expected": "0",
+      "timeoutSeconds": 300
+    },
+    {
+      "name": "admin-route-serves-client",
+      "kind": "http-probe",
+      "startCommand": "npm",
+      "startArgs": ["run", "dev", "--", "--host", "127.0.0.1"],
+      "url": "http://127.0.0.1:5173/admin",
+      "verificationMethod": "http-status",
+      "expected": "200",
+      "timeoutSeconds": 120
+    }
+  ]
+}

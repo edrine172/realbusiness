@@ -4,6 +4,8 @@ import {
   CircleAlert, Clock3, Eye, EyeOff, FileText, Filter, LogOut, Plus, RefreshCw,
   Search, ShieldCheck, Users, Wallet, X,
 } from 'lucide-react';
+import FileActionMenu from './FileActionMenu';
+import { downloadSpreadsheetWorkbook, readSpreadsheetWorkbook } from './fileFormats';
 import {
   api, formatCurrency as currency, getCurrencyDisplay, type AccessUser, type PayrollRun,
   type StaffAttendance, type StaffDashboardData, type StaffMember, type StaffMemberInput,
@@ -124,7 +126,7 @@ function WorkerForm({ worker, onClose, onSaved }: {
   </div>;
 }
 
-function DailyAttendancePanel({ period, workers, locked, selectedWorkerId, monthlyGrossByWorker, onSelectedWorkerChange, panelRef, onPeriodChange, onSaved }: {
+function DailyAttendancePanel({ period, workers, locked, selectedWorkerId, monthlyGrossByWorker, onSelectedWorkerChange, panelRef, onPeriodChange, onSaved, onConfirmImport }: {
   period: string;
   workers: StaffMember[];
   locked: boolean;
@@ -134,6 +136,7 @@ function DailyAttendancePanel({ period, workers, locked, selectedWorkerId, month
   panelRef: React.RefObject<HTMLElement>;
   onPeriodChange: (period: string) => void;
   onSaved: () => Promise<void>;
+  onConfirmImport: (attendanceRows: number, activityRows: number) => Promise<boolean>;
 }) {
   const [date, setDate] = useState(() => savedPayrollDate(period));
   const draftDateRef = useRef(date);
@@ -147,8 +150,10 @@ function DailyAttendancePanel({ period, workers, locked, selectedWorkerId, month
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [savingTaskWorkerId, setSavingTaskWorkerId] = useState<number | null>(null);
+  const [workbookBusy, setWorkbookBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const workbookInputRef = useRef<HTMLInputElement>(null);
   const [year, month] = period.split('-').map(Number);
   const numberOfDays = new Date(year, month, 0).getDate();
   const periodEnd = `${period}-${String(numberOfDays).padStart(2, '0')}`;
@@ -218,6 +223,215 @@ function DailyAttendancePanel({ period, workers, locked, selectedWorkerId, month
   const monthTotal = periodWorkers.filter((worker) => worker.pay_basis === 'daily').reduce((total, worker) => total + Number(worker.period_gross || 0), 0);
   const activeTasks = availableTasks.filter((task) => task.is_active);
 
+
+  async function exportWorkbook(includeRecords: boolean) {
+    setWorkbookBusy(true);
+    setError('');
+    setNotice('');
+    try {
+      await downloadSpreadsheetWorkbook(`stockpulse-workforce-${period}${includeRecords ? '' : '-template'}.xlsx`, [
+        {
+          name: 'Attendance',
+          rows: [
+            ['employee_number', 'worker_name', 'date', 'attended', 'output_quantity', 'daily_wage_override'],
+            ...(includeRecords ? attendanceRecords.map((record) => [
+              record.employee_number, record.worker_name, record.date, record.attended, record.output_quantity,
+              record.daily_wage_override ?? '',
+            ]) : []),
+          ],
+        },
+        {
+          name: 'Activities',
+          rows: [
+            ['employee_number', 'worker_name', 'date', 'task_id', 'task_name', 'hours', 'units_worked'],
+            ...(includeRecords ? taskEntries.map((entry) => [
+              entry.employee_number, entry.worker_name, entry.date, entry.task, entry.task_name, entry.hours, entry.units_worked,
+            ]) : []),
+          ],
+        },
+        {
+          name: 'Reference',
+          rows: [
+            ['employee_number', 'worker_name', 'worker_id', 'task_id', 'task_name', 'pay_basis'],
+            ...workers.map((worker) => [worker.employee_number, worker.full_name, worker.id, '', '', '']),
+            ...availableTasks.map((task) => ['', '', '', task.id, task.name, task.pay_basis]),
+          ],
+        },
+      ]);
+      setNotice(includeRecords ? `Exported attendance and activity records for ${periodLabel(period)}.` : 'Downloaded a blank attendance and activity workbook template.');
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'The workforce workbook could not be exported.');
+    } finally {
+      setWorkbookBusy(false);
+    }
+  }
+
+  async function importWorkbook(file?: File) {
+    if (!file) return;
+    setWorkbookBusy(true);
+    setError('');
+    setNotice('');
+    let savedAttendanceCount = 0;
+    let savedActivityCount = 0;
+    try {
+      if (locked) throw new Error('Attendance and activities are locked because payroll has been generated for this month.');
+      const sheets = await readSpreadsheetWorkbook(file);
+      const attendanceSheet = sheets.find((sheet) => sheet.name.trim().toLowerCase() === 'attendance');
+      const activitiesSheet = sheets.find((sheet) => sheet.name.trim().toLowerCase() === 'activities');
+      if (!attendanceSheet && !activitiesSheet) throw new Error('The workbook must contain an Attendance sheet, an Activities sheet, or both.');
+
+      function parseSheet(sheet: typeof sheets[number] | undefined, required: string[]) {
+        if (!sheet) return [] as Array<{ get: (name: string) => string; rowNumber: number }>;
+        const [header = [], ...rows] = sheet.rows;
+        const normalize = (value: string) => value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+        const columns = new Map(header.map((value, index) => [normalize(value), index]));
+        const missing = required.filter((column) => !columns.has(column));
+        if (missing.length) throw new Error(`${sheet.name} is missing required columns: ${missing.join(', ')}.`);
+        return rows.flatMap((row, index) => row.some((value) => value.trim()) ? [{
+          rowNumber: index + 2,
+          get: (name: string) => row[columns.get(name) ?? -1]?.trim() ?? '',
+        }] : []);
+      }
+
+      const attendanceRows = parseSheet(attendanceSheet, ['employee_number', 'date', 'attended']);
+      const activityRows = parseSheet(activitiesSheet, ['employee_number', 'date', 'task_id']);
+      if (!attendanceRows.length && !activityRows.length) throw new Error('The workbook has no attendance or activity rows to import.');
+
+      const workerByNumber = new Map(workers.map((worker) => [worker.employee_number.trim().toUpperCase(), worker]));
+      const [existingAttendance, existingActivities, importTasks] = await Promise.all([
+        api.staffAttendance(period),
+        api.staffTaskEntries(period),
+        api.staffTasks(),
+      ]);
+      const taskById = new Map(importTasks.map((task) => [task.id, task]));
+      const importedAttendanceKeys = new Map<string, boolean>();
+      const attendanceByDate = new Map<string, Array<{ worker: number; attended: boolean; output_quantity: number; daily_wage_override: number | null }>>();
+      const activityByDate = new Map<string, Array<{ worker: number; task: number; hours: string; units_worked: number }>>();
+      const todayDate = new Date().toISOString().slice(0, 10);
+
+      function validateDate(value: string, sheetName: string, rowNumber: number) {
+        const [yearValue, monthValue, dayValue] = value.split('-').map(Number);
+        const parsed = new Date(yearValue, monthValue - 1, dayValue);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(value)
+          || parsed.getFullYear() !== yearValue
+          || parsed.getMonth() !== monthValue - 1
+          || parsed.getDate() !== dayValue) {
+          throw new Error(`${sheetName} row ${rowNumber}: date must use YYYY-MM-DD.`);
+        }
+        if (!value.startsWith(`${period}-`)) throw new Error(`${sheetName} row ${rowNumber}: date must be in ${periodLabel(period)}.`);
+        if (value > todayDate) throw new Error(`${sheetName} row ${rowNumber}: future dates cannot be imported.`);
+        return value;
+      }
+
+      function findWorker(employeeNumber: string, date: string, sheetName: string, rowNumber: number) {
+        const worker = workerByNumber.get(employeeNumber.trim().toUpperCase());
+        if (!worker) throw new Error(`${sheetName} row ${rowNumber}: employee number "${employeeNumber}" was not found.`);
+        if (worker.status !== 'active') throw new Error(`${sheetName} row ${rowNumber}: ${worker.full_name} is not active.`);
+        if (worker.hire_date > date) throw new Error(`${sheetName} row ${rowNumber}: ${worker.full_name} was not employed on ${date}.`);
+        return worker;
+      }
+
+      const seenAttendance = new Set<string>();
+      for (const row of attendanceRows) {
+        const date = validateDate(row.get('date'), 'Attendance', row.rowNumber);
+        const worker = findWorker(row.get('employee_number'), date, 'Attendance', row.rowNumber);
+        const key = `${date}:${worker.id}`;
+        if (seenAttendance.has(key)) throw new Error(`Attendance row ${row.rowNumber}: duplicate employee and date.`);
+        seenAttendance.add(key);
+        const attendedValue = row.get('attended').toLowerCase();
+        const attended = ['true', 'yes', '1', 'worked', 'present'].includes(attendedValue)
+          ? true
+          : ['false', 'no', '0', 'absent', 'did not work'].includes(attendedValue)
+            ? false
+            : null;
+        if (attended === null) throw new Error(`Attendance row ${row.rowNumber}: attended must be Worked/Absent or true/false.`);
+        if (!attended && existingActivities.some((entry) => entry.date === date && entry.worker === worker.id)) {
+          throw new Error(`Attendance row ${row.rowNumber}: ${worker.full_name} already has activities recorded for ${date} and cannot be marked absent.`);
+        }
+        const outputValue = row.get('output_quantity').replace(/,/g, '');
+        if (attended && worker.pay_basis === 'daily' && !outputValue) {
+          throw new Error(`Attendance row ${row.rowNumber}: daily-paid workers need output_quantity when marked attended.`);
+        }
+        const outputQuantity = outputValue ? Number(outputValue) : 0;
+        if (!Number.isInteger(outputQuantity) || outputQuantity < 0) throw new Error(`Attendance row ${row.rowNumber}: output_quantity must be a non-negative whole number.`);
+        const overrideValue = row.get('daily_wage_override').replace(/,/g, '');
+        const wageOverride = overrideValue ? Number(overrideValue) : null;
+        if (wageOverride !== null && (!Number.isFinite(wageOverride) || wageOverride < 0)) throw new Error(`Attendance row ${row.rowNumber}: daily_wage_override must be a non-negative amount.`);
+        if (wageOverride !== null && (!attended || worker.pay_basis !== 'daily' || outputQuantity >= 8)) {
+          throw new Error(`Attendance row ${row.rowNumber}: wage overrides are only allowed for attended daily-paid workers with fewer than 8 units.`);
+        }
+        importedAttendanceKeys.set(key, attended);
+        const group = attendanceByDate.get(date) ?? [];
+        group.push({ worker: worker.id, attended, output_quantity: outputQuantity, daily_wage_override: wageOverride });
+        attendanceByDate.set(date, group);
+      }
+
+      const seenActivities = new Set<string>();
+      for (const row of activityRows) {
+        const date = validateDate(row.get('date'), 'Activities', row.rowNumber);
+        const worker = findWorker(row.get('employee_number'), date, 'Activities', row.rowNumber);
+        const taskIdText = row.get('task_id');
+        const taskId = Number(taskIdText);
+        const task = /^\d+$/.test(taskIdText) ? taskById.get(taskId) : undefined;
+        if (!task) throw new Error(`Activities row ${row.rowNumber}: task_id "${taskIdText}" was not found.`);
+        const attendanceKey = `${date}:${worker.id}`;
+        const importedAttended = importedAttendanceKeys.get(attendanceKey);
+        const recordedAttended = existingAttendance.some((record) => record.date === date && record.worker === worker.id && record.attended);
+        if (!(importedAttended ?? recordedAttended)) throw new Error(`Activities row ${row.rowNumber}: ${worker.full_name} must be marked attended for ${date}.`);
+        const existingEntry = existingActivities.find((entry) => entry.date === date && entry.worker === worker.id && entry.task === task.id);
+        if (!task.is_active && !existingEntry) throw new Error(`Activities row ${row.rowNumber}: ${task.name} is inactive.`);
+        const key = `${date}:${worker.id}:${task.id}`;
+        if (seenActivities.has(key)) throw new Error(`Activities row ${row.rowNumber}: duplicate employee, task, and date.`);
+        seenActivities.add(key);
+        const hoursText = row.get('hours').replace(/,/g, '');
+        const hours = hoursText ? Number(hoursText) : 0;
+        const unitsText = row.get('units_worked').replace(/,/g, '');
+        if (task.pay_basis === 'target' && !unitsText) throw new Error(`Activities row ${row.rowNumber}: target tasks require units_worked.`);
+        const unitsWorked = unitsText ? Number(unitsText) : 0;
+        if (!Number.isFinite(hours) || hours < 0) throw new Error(`Activities row ${row.rowNumber}: hours must be a non-negative number.`);
+        if (!Number.isInteger(unitsWorked) || unitsWorked < 0) throw new Error(`Activities row ${row.rowNumber}: units_worked must be a non-negative whole number.`);
+        if (task.pay_basis === 'hourly' && hours <= 0) throw new Error(`Activities row ${row.rowNumber}: hourly tasks require hours greater than zero.`);
+        const group = activityByDate.get(date) ?? [];
+        group.push({ worker: worker.id, task: task.id, hours: String(hours), units_worked: unitsWorked });
+        activityByDate.set(date, group);
+      }
+
+      if (!await onConfirmImport(attendanceRows.length, activityRows.length)) return;
+
+      for (const [date, records] of [...attendanceByDate.entries()].sort(([first], [second]) => first.localeCompare(second))) {
+        await api.recordStaffAttendance(date, records, true);
+        savedAttendanceCount += records.length;
+      }
+      for (const [date, importedRecords] of [...activityByDate.entries()].sort(([first], [second]) => first.localeCompare(second))) {
+        const merged = new Map(existingActivities.filter((entry) => entry.date === date).map((entry) => [
+          `${entry.worker}:${entry.task}`,
+          { worker: entry.worker, task: entry.task, hours: entry.hours, units_worked: entry.units_worked },
+        ]));
+        importedRecords.forEach((entry) => merged.set(`${entry.worker}:${entry.task}`, entry));
+        await api.recordStaffTaskEntries(date, [...merged.values()], true);
+        savedActivityCount += importedRecords.length;
+      }
+
+      const [updatedAttendance, updatedActivities] = await Promise.all([
+        api.staffAttendance(period),
+        api.staffTaskEntries(period),
+      ]);
+      setAttendanceRecords(updatedAttendance);
+      setTaskEntries(updatedActivities);
+      setTaskRefreshToken((current) => current + 1);
+      await onSaved();
+      setNotice(`Imported ${savedAttendanceCount} attendance and ${savedActivityCount} activity rows for ${periodLabel(period)}.`);
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : 'The workforce workbook could not be imported.';
+      const partial = savedAttendanceCount || savedActivityCount
+        ? ` Import stopped after saving ${savedAttendanceCount} attendance and ${savedActivityCount} activity rows.`
+        : '';
+      setError(`${message}${partial}`);
+    } finally {
+      setWorkbookBusy(false);
+      if (workbookInputRef.current) workbookInputRef.current.value = '';
+    }
+  }
   useEffect(() => { setDate(savedPayrollDate(period)); }, [period]);
   useEffect(() => {
     if (!date.startsWith(`${period}-`)) return;
@@ -380,6 +594,15 @@ function DailyAttendancePanel({ period, workers, locked, selectedWorkerId, month
     <div className="staff-section-heading">
       <div><span className="staff-section-icon"><CalendarDays size={14}/></span><div><h2>Daily attendance &amp; wages</h2><p>{selectedWorker ? `${selectedWorker.full_name} · ${selectedWorker.pay_basis === 'daily' ? `month to date ${currency(selectedWorkerMonthTotal)}` : selectedWorker.pay_basis_display}` : `Daily wages month to date: ${currency(monthTotal)}`}</p></div></div>
       <div className="staff-attendance-header-actions"><label className="staff-attendance-month-select"><span>Attendance month</span><input aria-label="Select attendance month and year" type="month" value={period} onChange={(event) => { if (event.target.value) onPeriodChange(event.target.value); }}/></label><div className="staff-attendance-selected-date"><span>Selected day</span><strong>{new Date(`${date}T00:00:00`).toLocaleDateString('en-UG', { weekday: 'long', day: 'numeric', month: 'long' })}</strong></div></div>
+    </div>
+    <div className="staff-attendance-file-toolbar">
+      <FileActionMenu label="Excel workbook" direction="files" options={[
+        { label: 'Import attendance and activities', direction: 'import', disabled: locked || workbookBusy, onSelect: () => workbookInputRef.current?.click() },
+        { label: 'Export current month', direction: 'export', disabled: workbookBusy || (!attendanceRecords.length && !taskEntries.length), onSelect: () => void exportWorkbook(true) },
+        { label: 'Download blank template', direction: 'export', disabled: workbookBusy, onSelect: () => void exportWorkbook(false) },
+      ]}/>
+      <input ref={workbookInputRef} className="catalog-hidden" type="file" accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" onChange={(event) => void importWorkbook(event.target.files?.[0])}/>
+      <span>{workbookBusy ? 'Processing workbook…' : `Workbook period: ${periodLabel(period)} · existing rows are preserved`}</span>
     </div>
     <div className="staff-attendance-summary"><span>{selectedWorker ? selectedWorkerRecord ? `${selectedWorker.full_name}: ${selectedWorkerRecord.attended ? 'Worked' : 'Did not work'} on this date` : selectedWorker.hire_date > date ? `${selectedWorker.full_name} was not employed yet` : `No attendance entry for ${selectedWorker.full_name} on this date` : selectedDateRecords.length ? `${presentCount} of ${attendanceWorkers.length} workers marked present` : 'Attendance has not been recorded for this day'}</span><strong>{currency(selectedWorker ? selectedWorkerDayTotal : dailyTotal)} for this day{(selectedWorker ? selectedWorkerTaskPay : selectedDateTaskPay) > 0 && <small>{currency(selectedWorker ? selectedWorkerTaskPay : selectedDateTaskPay)} task pay included</small>}</strong></div>
     <label className="staff-worker-search"><Search size={14}/><input type="search" value={workerSearch} onChange={(event) => setWorkerSearch(event.target.value)} placeholder="Search workers by name or employee number" aria-label="Search workers by name or employee number"/>{workerSearch && <button type="button" onClick={() => setWorkerSearch('')} aria-label="Clear worker search"><X size={13}/></button>}</label>
@@ -988,7 +1211,7 @@ export default function StaffDashboard({ onNavigate, onSignOut }: { onNavigate: 
       <article className="staff-metric disbursement"><div><span>DISBURSEMENT STATUS</span><ShieldCheck size={15}/></div><strong>{currentRun?.status === 'paid' ? 'Paid' : currentRun ? 'Ready to review' : 'Draft'}</strong><div className="staff-progress"><i style={{ width: `${paidPercentage}%` }}/></div><small>{currentRun ? `${currentRun.worker_count} worker records · ${dateLabel(currentRun.paid_at)}` : 'No payroll run for this period'}</small></article>
     </section>
 
-    <DailyAttendancePanel key={period} period={period} workers={dashboard.workers} locked={Boolean(currentRun)} selectedWorkerId={selectedWorkerId} monthlyGrossByWorker={monthlyGrossByWorker} onSelectedWorkerChange={setSelectedWorkerId} panelRef={attendancePanelRef} onPeriodChange={setPeriod} onSaved={loadDashboard}/>
+    <DailyAttendancePanel key={period} period={period} workers={dashboard.workers} locked={Boolean(currentRun)} selectedWorkerId={selectedWorkerId} monthlyGrossByWorker={monthlyGrossByWorker} onSelectedWorkerChange={setSelectedWorkerId} panelRef={attendancePanelRef} onPeriodChange={setPeriod} onSaved={loadDashboard} onConfirmImport={(attendanceRows, activityRows) => confirm({ title: 'Import attendance and activities?', message: `Import ${attendanceRows} attendance and ${activityRows} activity rows for ${periodLabel(period)}? Matching rows will be updated; other records will be kept.`, confirmLabel: 'Import workbook', variant: 'danger' })}/>
 
     <div className="staff-main-grid">
       <section className="staff-ledger-panel">

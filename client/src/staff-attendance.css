@@ -73,6 +73,8 @@
 .staff-attendance-table tr.is-selected-worker td{background:#f2f6ff}
 .staff-attendance-table tr.is-selected-worker:hover td{background:#edf3ff}
 .staff-attendance-header-actions{display:flex;align-items:center;gap:14px}
+.staff-attendance-file-toolbar{display:flex;align-items:center;gap:9px;margin:0 0 9px}
+.staff-attendance-file-toolbar>span{color:#77869b;font-size:8px}
 .staff-attendance-month-select{display:grid;gap:3px;text-align:left}
 .staff-attendance-month-select>span{color:#77849a;font-size:8px}
 .staff-attendance-month-select input{width:132px;height:29px;padding:0 7px;border:1px solid #dfe5ee;border-radius:5px;background:#fff;color:#34445b;font:inherit;font-size:9px}
@@ -102,4 +104,4 @@
 .staff-attendance-panel{scroll-margin-top:12px}
 .staff-calendar-day>.staff-calendar-task-pay{color:#285ca8}
 @media(max-width:560px){.staff-attendance-panel{padding:9px}.staff-attendance-panel .staff-section-heading{align-items:flex-start;flex-direction:column;gap:8px}.staff-attendance-selected-date{text-align:left}.staff-attendance-summary{align-items:flex-start;flex-direction:column;gap:4px}.staff-calendar{padding:5px;margin-block:6px 9px}.staff-calendar-weekdays,.staff-calendar-grid{gap:3px}.staff-calendar-day,.staff-calendar-blank{min-height:49px}.staff-calendar-day{gap:3px;padding:4px}.staff-calendar-day>span,.staff-calendar-day>small{font-size:6px}.staff-attendance-footer{align-items:flex-start;flex-direction:column}.staff-attendance-footer .catalog-button{width:100%;justify-content:center}}
-@media(max-width:560px){.staff-attendance-header-actions{width:100%;align-items:flex-start;justify-content:space-between;gap:8px}.staff-attendance-month-select input{max-width:100%}}
+@media(max-width:560px){.staff-attendance-header-actions{width:100%;align-items:flex-start;justify-content:space-between;gap:8px}.staff-attendance-month-select input{max-width:100%}.staff-attendance-file-toolbar{align-items:flex-start;flex-direction:column;gap:5px}}
