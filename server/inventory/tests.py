@@ -2221,7 +2221,7 @@ class DashboardAccountTests(APITestCase):
         user = get_user_model().objects.get(username='gmail-member')
         self.assertEqual(user.email, 'gmail.member@gmail.com')
 
-    def test_registration_creates_full_access_workspace_user_and_starts_session(self):
+    def test_registration_creates_read_only_dashboard_user_and_starts_session(self):
         registered = self.client.post('/api/account/register/', {
             'username': 'warehouse-member',
             'email': 'member@example.test',
@@ -2233,12 +2233,25 @@ class DashboardAccountTests(APITestCase):
         self.assertTrue(user.check_password('safe-password-123'))
         self.assertTrue(user.is_staff)
         self.assertFalse(user.is_superuser)
-        self.assertEqual(list(user.groups.values_list('name', flat=True)), ['Registered workspace users'])
+        self.assertEqual(list(user.groups.values_list('name', flat=True)), ['Dashboard viewers'])
+        self.assertTrue(user.has_perm('inventory.view_product'))
+        self.assertFalse(user.has_perm('inventory.add_product'))
+        self.assertFalse(user.has_perm('inventory.manage_access'))
         self.assertEqual(self.client.get('/api/account/session/').status_code, 200)
         self.assertEqual(self.client.get('/api/access/session/').status_code, 200)
-        self.assertEqual(self.client.get('/api/access/dashboard/').status_code, 200)
+        self.assertEqual(self.client.get('/api/access/dashboard/').status_code, 403)
         self.assertEqual(self.client.get('/api/dashboard/summary/').status_code, 200)
         self.assertEqual(self.client.get('/api/products/').status_code, 200)
+        for endpoint in (
+            '/api/purchases/summary/',
+            '/api/sales/summary/',
+            '/api/expenses/summary/',
+            '/api/reports/summary/',
+            '/api/staff/dashboard/',
+        ):
+            with self.subTest(endpoint=endpoint):
+                self.assertEqual(self.client.get(endpoint).status_code, 200)
+        self.assertEqual(self.client.post('/api/products/', {}, format='json').status_code, 403)
 
     def test_login_logout_and_registration_validation(self):
         duplicate = self.client.post('/api/account/register/', {

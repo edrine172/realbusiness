@@ -98,7 +98,7 @@ export default function AccountEntry({ onBack, onAuthenticated, initialMode = 's
           {notice && <p className="account-entry-password-note" role="status">{notice}</p>}
           <button className="account-entry-submit" disabled={busy}>{busy ? 'Please wait…' : mode === 'sign-in' ? 'Sign in to workspace' : 'Sign up'}<ArrowRight size={15}/></button>
         </form>
-        <div className="account-entry-card-footer"><ShieldCheck size={14}/><span>{mode === 'sign-in' ? 'Your workspace account is protected by a secure session.' : 'New accounts receive full workspace access immediately.'}</span></div>
+        <div className="account-entry-card-footer"><ShieldCheck size={14}/><span>{mode === 'sign-in' ? 'Your workspace account is protected by a secure session.' : 'New accounts receive read-only access to business dashboards.'}</span></div>
       </div>
       <p className="account-entry-access-note"><UserRoundPlus size={13}/> Administrator tools require an authorized account.</p>
       {mode === 'sign-up' && <a className="account-entry-admin-link" href="/admin">Administrator sign-in <ArrowRight size={13}/></a>}

@@ -168,8 +168,11 @@ class IsAdmin(BasePermission):
 
 
 def _registered_user_group():
-    group, _ = Group.objects.get_or_create(name='Registered workspace users')
-    group.permissions.add(*Permission.objects.filter(content_type__app_label='inventory'))
+    group, _ = Group.objects.get_or_create(name='Dashboard viewers')
+    group.permissions.add(*Permission.objects.filter(
+        content_type__app_label='inventory',
+        codename__startswith='view_',
+    ))
     return group
 
 
