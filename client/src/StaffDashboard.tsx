@@ -56,12 +56,12 @@ const dailyAttendanceWage = (date: string, attended: boolean, outputQuantity: st
   const units = Number(outputQuantity);
   const tierWage = isSunday(date)
     ? units >= 15 ? 7000 : units >= 12 ? 6000 : units >= 8 ? 4000 : null
-    : units >= 15 ? 7000 : units >= 12 ? 6000 : units >= 8 ? 5000 : null;
+    : units >= 15 ? 7000 : units >= 12 ? 6000 : units >= 10 ? 5000 : units >= 8 ? 4000 : null;
   return tierWage ?? (wageOverride.trim() ? Number(wageOverride) : 0);
 };
 const dailyAttendanceTier = (outputQuantity: string | number) => {
   const units = Number(outputQuantity);
-  return units >= 15 ? '15+ units' : units >= 12 ? '12–14 units' : units >= 8 ? '8–11 units' : 'Below 8 units';
+  return units >= 15 ? '15+ units' : units >= 12 ? '12–14 units' : units >= 10 ? '10–11 units' : units >= 8 ? '8–9 units' : 'Below 8 units';
 };
 const targetTierPayout = (unitsWorked: number, tiers: StaffTaskTargetTier[]) =>
   tiers.filter((tier) => unitsWorked >= tier.target_quantity)
