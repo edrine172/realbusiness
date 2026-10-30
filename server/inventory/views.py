@@ -82,6 +82,56 @@ def task_pay_totals(entries):
     }
 
 
+def refresh_unpaid_worker_payroll(worker):
+    cent = Decimal('0.01')
+    runs = PayrollRun.objects.select_for_update().filter(
+        status=PayrollRun.Status.SCHEDULED,
+        lines__worker=worker,
+    ).distinct().order_by('period')
+    for run in runs:
+        line = PayrollLine.objects.select_for_update().get(run=run, worker=worker)
+        year, month = map(int, run.period.split('-'))
+        attendance = StaffAttendance.objects.filter(
+            worker=worker,
+            date__year=year,
+            date__month=month,
+            attended=True,
+        ).aggregate(days_worked=Count('id'), gross=Sum('daily_wage'))
+        hours = worker.hours_per_period if worker.pay_basis == StaffMember.PayBasis.HOURLY else Decimal('0')
+        if worker.pay_basis == StaffMember.PayBasis.DAILY:
+            base_gross = attendance['gross'] or Decimal('0.00')
+        elif worker.pay_basis == StaffMember.PayBasis.MONTHLY:
+            base_gross = worker.pay_rate
+        else:
+            base_gross = worker.pay_rate * hours
+        gross = (base_gross + line.task_pay).quantize(cent, rounding=ROUND_HALF_UP)
+        withholding = (gross * worker.withholding_percent / Decimal('100')).quantize(cent, rounding=ROUND_HALF_UP)
+        benefits = min(worker.benefit_deduction, gross) if worker.pay_basis == StaffMember.PayBasis.DAILY else worker.benefit_deduction
+        if withholding + benefits > gross:
+            raise ValidationError({'worker': f'Deductions exceed gross pay for {worker.employee_number}.'})
+        line.pay_basis = worker.pay_basis
+        line.hours = hours
+        line.days_worked = attendance['days_worked']
+        line.gross_pay = gross
+        line.withholding = withholding
+        line.benefits = benefits
+        line.net_pay = gross - withholding - benefits
+        line.save(update_fields=[
+            'pay_basis', 'hours', 'days_worked', 'gross_pay', 'withholding', 'benefits', 'net_pay',
+        ])
+        totals = run.lines.aggregate(
+            gross_total=Sum('gross_pay'),
+            withholding_total=Sum('withholding'),
+            benefits_total=Sum('benefits'),
+            net_total=Sum('net_pay'),
+        )
+        run.gross_total = totals['gross_total'] or Decimal('0.00')
+        run.withholding_total = totals['withholding_total'] or Decimal('0.00')
+        run.benefits_total = totals['benefits_total'] or Decimal('0.00')
+        run.net_total = totals['net_total'] or Decimal('0.00')
+        run.save(update_fields=['gross_total', 'withholding_total', 'benefits_total', 'net_total'])
+
+
 SETTINGS_DEFAULTS = {
     'organization': {
         'business_name': 'Apex Supply Co.',
@@ -619,8 +669,12 @@ class StaffMemberViewSet(viewsets.ModelViewSet):
             details={'full_name': worker.full_name, 'department': worker.department},
         )
 
+    @transaction.atomic
     def perform_update(self, serializer):
         worker = serializer.save()
+        compensation_fields = {'pay_basis', 'pay_rate', 'hours_per_period', 'withholding_percent', 'benefit_deduction'}
+        if compensation_fields.intersection(serializer.validated_data):
+            refresh_unpaid_worker_payroll(worker)
         SecurityAuditEvent.objects.create(
             actor=self.request.user,
             action='staff.updated',

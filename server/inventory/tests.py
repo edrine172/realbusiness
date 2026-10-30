@@ -362,7 +362,7 @@ class StaffPayrollTests(APITestCase):
         self.assertEqual(self.client.post('/api/staff/attendance/record_day/', {}, format='json').status_code, 403)
         self.assertEqual(self.client.post('/api/staff/payroll-runs/generate/', {'period': '2025-02'}, format='json').status_code, 403)
 
-    def test_worker_validation_and_monthly_payroll_snapshot(self):
+    def test_worker_validation_and_salary_update_recalculates_unpaid_payroll(self):
         invalid = self.create_worker(withholding_percent='80.00', benefit_deduction='250000.00')
         self.assertEqual(invalid.status_code, 400)
         self.assertFalse(StaffMember.objects.exists())
@@ -385,10 +385,22 @@ class StaffPayrollTests(APITestCase):
         self.assertEqual(generated.data['net_total'], '880000.00')
         self.assertEqual(len(generated.data['lines']), 1)
 
-        self.client.patch(f'/api/staff/workers/{worker_id}/', {'pay_rate': '1500000.00'}, format='json')
+        updated = self.client.patch(
+            f'/api/staff/workers/{worker_id}/',
+            {'pay_rate': '1500000.00'},
+            format='json',
+        )
+        self.assertEqual(updated.status_code, 200)
         line = PayrollLine.objects.get(run_id=generated.data['id'])
-        self.assertEqual(line.gross_pay, Decimal('1000000.00'))
-        self.assertEqual(line.net_pay, Decimal('880000.00'))
+        self.assertEqual(line.gross_pay, Decimal('1500000.00'))
+        self.assertEqual(line.withholding, Decimal('150000.00'))
+        self.assertEqual(line.net_pay, Decimal('1330000.00'))
+        run = PayrollRun.objects.get(pk=generated.data['id'])
+        self.assertEqual(run.gross_total, Decimal('1500000.00'))
+        self.assertEqual(run.net_total, Decimal('1330000.00'))
+        dashboard = self.client.get('/api/staff/dashboard/?period=2025-02').data
+        self.assertEqual(dashboard['summary']['gross_total'], Decimal('1500000.00'))
+        self.assertEqual(dashboard['summary']['net_total'], Decimal('1330000.00'))
 
         duplicate = self.client.post('/api/staff/payroll-runs/generate/', {'period': '2025-02'}, format='json')
         self.assertEqual(duplicate.status_code, 400)
@@ -397,6 +409,27 @@ class StaffPayrollTests(APITestCase):
         self.assertEqual(paid.data['status'], PayrollRun.Status.PAID)
         self.assertIsNotNone(paid.data['paid_at'])
         self.assertTrue(SecurityAuditEvent.objects.filter(action='payroll.marked_paid', target_id='2025-02').exists())
+
+    def test_salary_update_does_not_change_paid_payroll(self):
+        created = self.create_worker()
+        generated = self.client.post('/api/staff/payroll-runs/generate/', {'period': '2025-02'}, format='json')
+        self.assertEqual(generated.status_code, 201)
+        paid = self.client.post(
+            f"/api/staff/payroll-runs/{generated.data['id']}/mark_paid/",
+            {},
+            format='json',
+        )
+        self.assertEqual(paid.status_code, 200)
+
+        updated = self.client.patch(
+            f"/api/staff/workers/{created.data['id']}/",
+            {'pay_rate': '1500000.00'},
+            format='json',
+        )
+        self.assertEqual(updated.status_code, 200)
+        line = PayrollLine.objects.get(run_id=generated.data['id'])
+        self.assertEqual(line.gross_pay, Decimal('1000000.00'))
+        self.assertEqual(line.net_pay, Decimal('880000.00'))
 
     def test_hourly_worker_pay_and_invalid_period(self):
         created = self.create_worker(
