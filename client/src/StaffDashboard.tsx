@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowRight, Banknote, BriefcaseBusiness, CalendarDays, Check, ChevronDown,
   CircleAlert, Clock3, Eye, EyeOff, FileText, Filter, LogOut, Plus, RefreshCw,
-  Search, ShieldCheck, Users, Wallet, X,
+  Search, ShieldCheck, Trash2, Users, Wallet, X,
 } from 'lucide-react';
 import FileActionMenu from './FileActionMenu';
 import { downloadSpreadsheetWorkbook, readSpreadsheetWorkbook } from './fileFormats';
@@ -1010,7 +1010,7 @@ function TaskPayPanel({ period, date, workers, attendanceRecords, locked, refres
             <label className="catalog-field">Task<select value={selectedPermanentTask} onChange={(event) => setPermanentTask(event.target.value)}><option value="">Choose task</option>{activeTasks.map((task) => <option key={task.id} value={task.id}>{task.name} · {task.pay_basis === 'target' ? targetTierDescription(task.target_tiers) : task.pay_basis_display}</option>)}</select></label>
             <button type="button" className="catalog-button catalog-button-light" onClick={() => void assignPermanentTask()} disabled={saving || locked || loading || !activeWorkers.length || !activeTasks.length}><Plus size={13}/>Assign</button>
           </div>
-          <div className="staff-permanent-task-list">{permanentAssignments.map((assignment) => <div key={assignment.id}><span><strong>{assignment.worker_name}</strong><small>{assignment.task_name} · {assignment.pay_basis_display}{assignment.pay_basis === 'target' ? ` · ${targetTierDescription(assignment.target_tiers)}` : ` · ${currency(assignment.pay_rate)}`}</small></span><button type="button" className="catalog-button catalog-button-light" disabled={saving || locked} onClick={() => void deactivatePermanentAssignment(assignment)}>Unassign</button></div>)}{!permanentAssignments.length && <small>No permanent task assignments yet.</small>}</div>
+          <div className="staff-permanent-task-list">{permanentAssignments.map((assignment) => <div key={assignment.id}><span><strong>{assignment.worker_name}</strong><small>{assignment.task_name} · {assignment.pay_basis_display}{assignment.pay_basis === 'target' ? ` · ${targetTierDescription(assignment.target_tiers)}` : ` · ${currency(assignment.pay_rate)}`}</small></span><button type="button" className="catalog-icon-button" aria-label={`Remove ${assignment.task_name} assignment for ${assignment.worker_name}`} title="Remove permanent task assignment" disabled={saving || locked} onClick={() => void deactivatePermanentAssignment(assignment)}><Trash2 size={14}/></button></div>)}{!permanentAssignments.length && <small>No permanent task assignments yet.</small>}</div>
         </div>
         {!eligibleWorkers.length && !loading && <p className="staff-history-empty">Mark a worker attended for this day before assigning additional daily tasks.</p>}
         {loading ? <p className="staff-history-empty">Loading task pay records…</p> : drafts.length ? <div className="staff-task-assignment-list">{drafts.map((row, index) => {
@@ -1036,7 +1036,7 @@ function TaskPayPanel({ period, date, workers, attendanceRecords, locked, refres
                 : <span className="staff-task-assignment-rate"><small>{rowBasis === 'monthly' ? `Monthly amount${monthlySeenEarlier ? ' · already counted this month' : ''}` : 'Amount for this day'}</small><strong>{currency(rowAmount)}</strong></span>}
             {rowBasis === 'hourly' && <span className="staff-task-assignment-rate"><small>Amount for these hours</small><strong>{currency(rowAmount)}</strong></span>}
             {rowBasis === 'target' && <span className="staff-task-assignment-rate"><small>{rowPayout > 0 ? 'Highest target reached · payout' : 'Target not reached'}</small><strong>{currency(rowAmount)}</strong></span>}
-            <button type="button" className="catalog-icon-button" aria-label={permanentEntry ? 'Permanent assignment' : 'Remove task assignment'} title={permanentEntry ? 'Change the permanent assignment above to remove it' : 'Remove task assignment'} disabled={locked || permanentEntry} onClick={() => setDrafts((current) => current.filter((_, rowIndex) => rowIndex !== index))}>{permanentEntry ? <Check size={14}/> : <X size={14}/>}</button>
+            <button type="button" className="catalog-icon-button" aria-label={permanentEntry ? 'Permanent assignment' : 'Remove task assignment'} title={permanentEntry ? 'Change the permanent assignment above to remove it' : 'Remove task assignment'} disabled={locked || permanentEntry} onClick={() => setDrafts((current) => current.filter((_, rowIndex) => rowIndex !== index))}>{permanentEntry ? <Check size={14}/> : <Trash2 size={14}/>}</button>
           </div>;
         })}</div> : <p className="staff-history-empty">No task assignments recorded for this date.</p>}
         {error && <p className="catalog-form-error">{error}</p>}
