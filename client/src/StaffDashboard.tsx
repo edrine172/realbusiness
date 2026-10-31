@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import FileActionMenu from './FileActionMenu';
 import { downloadSpreadsheetWorkbook, readSpreadsheetWorkbook } from './fileFormats';
+import { attendanceRecordWage } from './staffAttendance';
 import {
   api, formatCurrency as currency, getCurrencyDisplay, type AccessUser, type PayrollRun,
   type StaffAttendance, type StaffDashboardData, type StaffMember, type StaffMemberInput,
@@ -177,6 +178,7 @@ function DailyAttendancePanel({ period, workers, locked, selectedWorkerId, month
     (grouped[record.date] ??= []).push(record);
     return grouped;
   }, {});
+  const workersById = new Map(workers.map((worker) => [worker.id, worker]));
   const selectedDateRecords = recordsByDate[date] ?? [];
   const selectedWorkerRecord = selectedWorker ? selectedDateRecords.find((record) => record.worker === selectedWorker.id) : undefined;
   const selectedDateTaskEntries = taskEntries.filter((entry) => entry.date === date);
@@ -190,7 +192,7 @@ function DailyAttendancePanel({ period, workers, locked, selectedWorkerId, month
   const selectedWorkerAttendancePay = selectedWorker?.pay_basis === 'daily'
     && selectedWorkerRecord?.attended
     && !selectedWorkerTaskEntries.length
-    ? Number(selectedWorkerRecord.daily_wage)
+    ? attendanceRecordWage(selectedWorkerRecord)
     : 0;
   const selectedWorkerDayTotal = selectedWorkerTaskPay + selectedWorkerAttendancePay;
   const selectedWorkerAttendance = selectedWorker
@@ -200,7 +202,7 @@ function DailyAttendancePanel({ period, workers, locked, selectedWorkerId, month
     ? selectedWorker.pay_basis === 'daily'
       ? selectedWorkerAttendance.reduce((total, record) => total + (
         record.attended && !taskEntries.some((entry) => entry.worker === selectedWorker.id && entry.date === record.date)
-          ? Number(record.daily_wage)
+          ? attendanceRecordWage(record)
           : 0
       ), 0) + Number(selectedWorker.period_task_pay)
       : monthlyGrossByWorker[selectedWorker.id] ?? 0
@@ -623,7 +625,7 @@ function DailyAttendancePanel({ period, workers, locked, selectedWorkerId, month
           const dailyEarnings = workerDayTasks.length
             ? taskPay
             : selectedWorker.pay_basis === 'daily'
-              ? record.attended ? Number(record.daily_wage) : 0
+              ? attendanceRecordWage(record)
               : null;
           return <tr key={record.id}>
             <td>{new Date(`${record.date}T00:00:00`).toLocaleDateString('en-UG', { weekday: 'short', day: 'numeric', month: 'short' })}</td>
@@ -651,11 +653,15 @@ function DailyAttendancePanel({ period, workers, locked, selectedWorkerId, month
           entry.date === dayDate && (!selectedWorker || entry.worker === selectedWorker.id));
         const taskTotal = dayTaskEntries.reduce((sum, entry) => sum + taskEntryPay(entry, taskEntries), 0);
         const taskWorkerIds = new Set(dayTaskEntries.map((entry) => entry.worker));
-        const attendanceTotal = records.reduce((sum, record) => sum + (
-          record.attended && !taskWorkerIds.has(record.worker) ? Number(record.daily_wage) : 0
-        ), 0);
+        const attendanceTotal = records.reduce((sum, record) => {
+          if (!record.attended || taskWorkerIds.has(record.worker)) return sum;
+          const worker = workersById.get(record.worker);
+          return sum + (worker
+            ? attendanceRecordWage(record)
+            : Number(record.daily_wage));
+        }, 0);
         const selectedAttendanceTotal = workerRecord?.attended && selectedWorker && !taskWorkerIds.has(selectedWorker.id)
-          ? Number(workerRecord.daily_wage)
+          ? attendanceRecordWage(workerRecord)
           : 0;
         const dayTotal = (selectedWorker ? selectedAttendanceTotal : attendanceTotal) + taskTotal;
         const workerStatus = workerRecord ? workerRecord.attended ? 'Worked' : 'Did not work' : selectedWorker?.hire_date && selectedWorker.hire_date > dayDate ? 'Not employed' : 'No entry';
