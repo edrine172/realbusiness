@@ -1017,6 +1017,9 @@ function TaskPayPanel({ period, date, workers, attendanceRecords, locked, refres
           const selectedTask = tasks.find((task) => task.id === Number(row.task));
           const entry = dayEntries.find((item) => item.worker === Number(row.worker) && item.task === Number(row.task));
           const permanentEntry = entry?.assignment_type === 'permanent';
+          const permanentAssignment = permanentEntry
+            ? permanentAssignments.find((assignment) => assignment.worker === Number(row.worker) && assignment.task === Number(row.task))
+            : undefined;
           const monthlySeenEarlier = selectedTask?.pay_basis === 'monthly' && entries.some((entry) =>
             entry.date.slice(0, 7) === period && entry.date < date && entry.worker === Number(row.worker) && entry.task === Number(row.task));
           const rowBasis = entry?.pay_basis ?? selectedTask?.pay_basis;
@@ -1036,7 +1039,10 @@ function TaskPayPanel({ period, date, workers, attendanceRecords, locked, refres
                 : <span className="staff-task-assignment-rate"><small>{rowBasis === 'monthly' ? `Monthly amount${monthlySeenEarlier ? ' · already counted this month' : ''}` : 'Amount for this day'}</small><strong>{currency(rowAmount)}</strong></span>}
             {rowBasis === 'hourly' && <span className="staff-task-assignment-rate"><small>Amount for these hours</small><strong>{currency(rowAmount)}</strong></span>}
             {rowBasis === 'target' && <span className="staff-task-assignment-rate"><small>{rowPayout > 0 ? 'Highest target reached · payout' : 'Target not reached'}</small><strong>{currency(rowAmount)}</strong></span>}
-            <button type="button" className="catalog-icon-button" aria-label={permanentEntry ? 'Permanent assignment' : 'Remove task assignment'} title={permanentEntry ? 'Change the permanent assignment above to remove it' : 'Remove task assignment'} disabled={locked || permanentEntry} onClick={() => setDrafts((current) => current.filter((_, rowIndex) => rowIndex !== index))}>{permanentEntry ? <Check size={14}/> : <Trash2 size={14}/>}</button>
+            <button type="button" className="catalog-icon-button" aria-label={permanentEntry ? permanentAssignment ? `Remove permanent ${selectedTask?.name ?? 'task'} assignment for ${eligibleWorkers.find((worker) => worker.id === Number(row.worker))?.full_name ?? 'worker'}` : 'Previously recorded permanent task' : 'Remove task assignment'} title={permanentEntry ? permanentAssignment ? 'Unassign this task going forward; existing pay records are preserved' : 'This permanent assignment was removed; existing pay records are preserved' : 'Remove task assignment'} disabled={locked || (permanentEntry && !permanentAssignment)} onClick={() => {
+              if (permanentAssignment) void deactivatePermanentAssignment(permanentAssignment);
+              else if (!permanentEntry) setDrafts((current) => current.filter((_, rowIndex) => rowIndex !== index));
+            }}>{permanentEntry && !permanentAssignment ? <Check size={14}/> : <Trash2 size={14}/>}</button>
           </div>;
         })}</div> : <p className="staff-history-empty">No task assignments recorded for this date.</p>}
         {error && <p className="catalog-form-error">{error}</p>}
