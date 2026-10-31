@@ -849,6 +849,8 @@ function TaskPayPanel({ period, date, workers, attendanceRecords, locked, refres
       const refreshedTasks = await api.staffTasks();
       setTasks(refreshedTasks);
       onTasksChange(refreshedTasks);
+      setEntries(await api.staffTaskEntries(period));
+      await onSaved();
       resetTaskForm();
       setNotice(editingTaskId ? 'Task pay details updated.' : 'Task and pay details added.');
     } catch (cause) {

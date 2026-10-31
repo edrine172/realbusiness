@@ -494,6 +494,12 @@ class StaffPayrollTests(APITestCase):
         )
         self.assertEqual(basis_change.status_code, 400)
 
+        updated_hourly = self.client.patch(
+            f"/api/staff/tasks/{hourly.data['id']}/",
+            {'pay_rate': '75.00'},
+            format='json',
+        )
+        self.assertEqual(updated_hourly.status_code, 200)
         updated_monthly = self.client.patch(
             f"/api/staff/tasks/{monthly.data['id']}/",
             {'pay_rate': '750.00'},
@@ -510,16 +516,21 @@ class StaffPayrollTests(APITestCase):
         self.assertEqual(second_day.status_code, 200)
 
         dashboard = self.client.get('/api/staff/dashboard/?period=2025-02').data
-        self.assertEqual(dashboard['workers'][0]['period_task_pay'], Decimal('800.00'))
-        self.assertEqual(dashboard['summary']['task_pay_total'], Decimal('800.00'))
-        self.assertEqual(dashboard['summary']['gross_total'], Decimal('1000800.00'))
+        self.assertEqual(dashboard['workers'][0]['period_task_pay'], Decimal('1100.00'))
+        self.assertEqual(dashboard['summary']['task_pay_total'], Decimal('1100.00'))
+        self.assertEqual(dashboard['summary']['gross_total'], Decimal('1001100.00'))
 
         generated = self.client.post('/api/staff/payroll-runs/generate/', {'period': '2025-02'}, format='json')
         self.assertEqual(generated.status_code, 201)
-        self.assertEqual(generated.data['gross_total'], '1000800.00')
-        self.assertEqual(generated.data['lines'][0]['task_pay'], '800.00')
-        self.assertEqual(generated.data['lines'][0]['withholding'], '100080.00')
-        self.assertEqual(generated.data['lines'][0]['net_pay'], '880720.00')
+        self.assertEqual(generated.data['gross_total'], '1001100.00')
+        self.assertEqual(generated.data['lines'][0]['task_pay'], '1100.00')
+        self.assertEqual(generated.data['lines'][0]['withholding'], '100110.00')
+        self.assertEqual(generated.data['lines'][0]['net_pay'], '880990.00')
+        hourly_assignment = StaffTaskEntry.objects.get(
+            worker_id=worker_id,
+            task_id=hourly.data['id'],
+            date='2025-02-03',
+        )
         first_monthly_assignment = StaffTaskEntry.objects.get(
             worker_id=worker_id,
             task_id=monthly.data['id'],
@@ -530,8 +541,20 @@ class StaffPayrollTests(APITestCase):
             task_id=monthly.data['id'],
             date='2025-02-04',
         )
-        self.assertEqual(first_monthly_assignment.pay_rate, Decimal('500.00'))
+        self.assertEqual(hourly_assignment.pay_rate, Decimal('75.00'))
+        self.assertEqual(first_monthly_assignment.pay_rate, Decimal('750.00'))
         self.assertEqual(second_monthly_assignment.pay_rate, Decimal('750.00'))
+
+        changed_after_generation = self.client.patch(
+            f"/api/staff/tasks/{hourly.data['id']}/",
+            {'pay_rate': '100.00'},
+            format='json',
+        )
+        self.assertEqual(changed_after_generation.status_code, 200)
+        hourly_assignment.refresh_from_db()
+        self.assertEqual(hourly_assignment.pay_rate, Decimal('75.00'))
+        unchanged_payroll = self.client.get('/api/staff/payroll-runs/').data[0]
+        self.assertEqual(unchanged_payroll['lines'][0]['task_pay'], '1100.00')
 
         locked = self.client.post('/api/staff/task-entries/record_day/', {
             'date': '2025-02-03',

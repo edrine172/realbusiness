@@ -705,10 +705,28 @@ class StaffTaskViewSet(viewsets.ModelViewSet):
             },
         )
 
+    @transaction.atomic
     def perform_update(self, serializer):
+        updated_fields = set(serializer.validated_data)
         task = serializer.save()
         if not task.is_active:
             StaffTaskAssignment.objects.filter(task=task, is_active=True).update(is_active=False)
+        if updated_fields.intersection({'name', 'pay_rate', 'target_tiers'}):
+            payroll_periods = set(PayrollRun.objects.values_list('period', flat=True))
+            entry_periods = StaffTaskEntry.objects.filter(task=task).dates('date', 'month')
+            for month_start in entry_periods:
+                period = month_start.strftime('%Y-%m')
+                if period in payroll_periods:
+                    continue
+                StaffTaskEntry.objects.filter(
+                    task=task,
+                    date__year=month_start.year,
+                    date__month=month_start.month,
+                ).update(
+                    task_name=task.name,
+                    pay_rate=task.pay_rate,
+                    target_tiers=task.target_tiers,
+                )
         SecurityAuditEvent.objects.create(
             actor=self.request.user,
             action='staff.task_updated',
