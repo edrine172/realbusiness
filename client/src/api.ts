@@ -1109,6 +1109,11 @@ export const api = {
   updateStaffTaskAssignment: (id: number, assignment: Partial<Pick<StaffTaskAssignment, 'is_active'>>) =>
     request<StaffTaskAssignment>(`/staff/task-assignments/${id}/`, { method: 'PATCH', body: JSON.stringify(assignment) }),
   staffTaskEntries: (period: string) => request<StaffTaskEntry[]>(`/staff/task-entries/?period=${encodeURIComponent(period)}`),
+  removePermanentStaffTaskEntry: (date: string, worker: number, task: number) =>
+    request<{ removed: boolean; permanent_assignment_deactivated: boolean }>('/staff/task-entries/remove_permanent/', {
+      method: 'POST',
+      body: JSON.stringify({ date, worker, task }),
+    }),
   recordStaffTaskEntries: (date: string, records: Array<{ worker: number; task: number; hours: string; units_worked: number }>, skipConfirmation = false) =>
     request<StaffTaskEntry[]>('/staff/task-entries/record_day/', { method: 'POST', body: JSON.stringify({ date, records }) }, skipConfirmation ? 'skip' : 'required', true),
   createStaffMember: (worker: StaffMemberInput) => request<StaffMember>('/staff/workers/', { method: 'POST', body: JSON.stringify(worker) }),

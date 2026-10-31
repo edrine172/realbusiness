@@ -676,6 +676,72 @@ class StaffPayrollTests(APITestCase):
         self.assertFalse(StaffTaskEntry.objects.filter(date='2025-02-05').exists())
         self.assertTrue(StaffTaskEntry.objects.filter(id=entry.id).exists())
 
+    def test_removing_permanent_task_deletes_selected_day_and_unassigns_future_days(self):
+        worker = self.create_worker()
+        task = self.client.post('/api/staff/tasks/', {
+            'name': 'Permanent packing',
+            'pay_basis': 'daily',
+            'pay_rate': '250.00',
+        }, format='json')
+        assignment = self.client.post('/api/staff/task-assignments/', {
+            'worker': worker.data['id'],
+            'task': task.data['id'],
+            'assigned_from': '2025-02-01',
+        }, format='json')
+        self.assertEqual(assignment.status_code, 201)
+
+        for work_date in ('2025-02-04', '2025-02-05'):
+            attendance = self.client.post('/api/staff/attendance/record_day/', {
+                'date': work_date,
+                'records': [{'worker': worker.data['id'], 'attended': True}],
+            }, format='json')
+            self.assertEqual(attendance.status_code, 200)
+
+        removed = self.client.post('/api/staff/task-entries/remove_permanent/', {
+            'date': '2025-02-04',
+            'worker': worker.data['id'],
+            'task': task.data['id'],
+        }, format='json')
+        self.assertEqual(removed.status_code, 200, removed.data)
+        self.assertTrue(removed.data['removed'])
+        self.assertTrue(removed.data['permanent_assignment_deactivated'])
+        self.assertFalse(StaffTaskEntry.objects.filter(
+            worker_id=worker.data['id'],
+            task_id=task.data['id'],
+            date='2025-02-04',
+        ).exists())
+        self.assertTrue(StaffTaskEntry.objects.filter(
+            worker_id=worker.data['id'],
+            task_id=task.data['id'],
+            date='2025-02-05',
+        ).exists())
+        self.assertFalse(self.client.get('/api/staff/task-assignments/?active=true').data)
+
+        next_day = self.client.post('/api/staff/attendance/record_day/', {
+            'date': '2025-02-06',
+            'records': [{'worker': worker.data['id'], 'attended': True}],
+        }, format='json')
+        self.assertEqual(next_day.status_code, 200)
+        self.assertFalse(StaffTaskEntry.objects.filter(
+            worker_id=worker.data['id'],
+            task_id=task.data['id'],
+            date='2025-02-06',
+        ).exists())
+
+        payroll = self.client.post('/api/staff/payroll-runs/generate/', {'period': '2025-02'}, format='json')
+        self.assertEqual(payroll.status_code, 201)
+        locked_removal = self.client.post('/api/staff/task-entries/remove_permanent/', {
+            'date': '2025-02-05',
+            'worker': worker.data['id'],
+            'task': task.data['id'],
+        }, format='json')
+        self.assertEqual(locked_removal.status_code, 400)
+        self.assertTrue(StaffTaskEntry.objects.filter(
+            worker_id=worker.data['id'],
+            task_id=task.data['id'],
+            date='2025-02-05',
+        ).exists())
+
     def test_same_permanent_task_can_be_assigned_to_multiple_workers(self):
         first_worker = self.create_worker(full_name='Amina Nansubuga')
         second_worker = self.create_worker(

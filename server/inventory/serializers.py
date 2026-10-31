@@ -805,6 +805,12 @@ class StaffTaskEntryInputSerializer(serializers.Serializer):
         return attrs
 
 
+class StaffTaskEntryRemovalInputSerializer(serializers.Serializer):
+    date = serializers.DateField(input_formats=['%Y-%m-%d'])
+    worker = serializers.PrimaryKeyRelatedField(queryset=StaffMember.objects.all())
+    task = serializers.PrimaryKeyRelatedField(queryset=StaffTask.objects.all())
+
+
 class StaffTaskEntrySerializer(serializers.ModelSerializer):
     worker_name = serializers.CharField(source='worker.full_name', read_only=True)
     employee_number = serializers.CharField(source='worker.employee_number', read_only=True)

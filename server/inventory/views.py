@@ -18,7 +18,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from .models import BottleCustomerPO, BottleCustomerPOLine, BottleDelivery, BottleDeliveryLine, BottleProduct, Category, ClientMaterial, ClientMaterialPO, ClientMaterialReceipt, Customer, CustomerLedgerEntry, Expense, ExpenseBudget, Notification, PayrollLine, PayrollRun, Product, Purchase, PurchaseItem, Sale, SaleItem, SecurityAuditEvent, StaffAttendance, StaffMember, StaffTask, StaffTaskAssignment, StaffTaskEntry, StockMovement, Supplier, SupplierLedgerEntry, SystemSetting
-from .serializers import BottleCustomerPOSerializer, BottleDeliverySerializer, BottleProductSerializer, CategorySerializer, ClientMaterialPOSerializer, ClientMaterialReceiptInputSerializer, ClientMaterialSerializer, CustomerLedgerEntrySerializer, CustomerPaymentSerializer, CustomerSerializer, ExpenseBudgetSerializer, ExpenseSerializer, NotificationSerializer, PayrollRunSerializer, ProductSerializer, PurchaseSerializer, SaleCheckoutSerializer, SaleSerializer, StaffAttendanceInputSerializer, StaffAttendanceSerializer, StaffMemberSerializer, StaffTaskAssignmentSerializer, StaffTaskEntryInputSerializer, StaffTaskEntrySerializer, StaffTaskSerializer, StockAdjustmentSerializer, StockMovementSerializer, SupplierLedgerEntrySerializer, SupplierPaymentSerializer, SupplierSerializer
+from .serializers import BottleCustomerPOSerializer, BottleDeliverySerializer, BottleProductSerializer, CategorySerializer, ClientMaterialPOSerializer, ClientMaterialReceiptInputSerializer, ClientMaterialSerializer, CustomerLedgerEntrySerializer, CustomerPaymentSerializer, CustomerSerializer, ExpenseBudgetSerializer, ExpenseSerializer, NotificationSerializer, PayrollRunSerializer, ProductSerializer, PurchaseSerializer, SaleCheckoutSerializer, SaleSerializer, StaffAttendanceInputSerializer, StaffAttendanceSerializer, StaffMemberSerializer, StaffTaskAssignmentSerializer, StaffTaskEntryInputSerializer, StaffTaskEntryRemovalInputSerializer, StaffTaskEntrySerializer, StaffTaskSerializer, StockAdjustmentSerializer, StockMovementSerializer, SupplierLedgerEntrySerializer, SupplierPaymentSerializer, SupplierSerializer
 from .date_ranges import day_range
 from .reports import build_report_summary
 from .permissions import RoleModelPermissions
@@ -813,6 +813,66 @@ class StaffTaskEntryViewSet(viewsets.ViewSet):
             date__month=parsed_period.month,
         ).select_related('worker', 'task')
         return Response(StaffTaskEntrySerializer(entries, many=True).data)
+
+    @action(detail=False, methods=['post'])
+    @transaction.atomic
+    def remove_permanent(self, request):
+        serializer = StaffTaskEntryRemovalInputSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        worker = serializer.validated_data['worker']
+        task = serializer.validated_data['task']
+        work_date = serializer.validated_data['date']
+        if work_date > timezone.localdate():
+            raise ValidationError({'date': 'Choose a task date that is not in the future.'})
+        if PayrollRun.objects.filter(period=work_date.strftime('%Y-%m')).exists():
+            raise ValidationError({'period': 'Task work is locked because payroll for this month has been generated.'})
+
+        entry = StaffTaskEntry.objects.select_for_update().filter(
+            worker=worker,
+            task=task,
+            date=work_date,
+            assignment_type=StaffTaskEntry.AssignmentType.PERMANENT,
+        ).first()
+        if entry is None:
+            raise ValidationError({'task': 'The permanent task record could not be found for this date.'})
+
+        assignment = StaffTaskAssignment.objects.select_for_update().filter(
+            worker=worker,
+            task=task,
+            is_active=True,
+            assigned_from__lte=work_date,
+        ).first()
+        if assignment:
+            assignment.is_active = False
+            assignment.save(update_fields=['is_active'])
+            SecurityAuditEvent.objects.create(
+                actor=request.user,
+                action='staff.task_assignment_updated',
+                target_type='staff_task_assignment',
+                target_id=str(assignment.id),
+                details={
+                    'worker': worker.full_name,
+                    'task': task.name,
+                    'is_active': False,
+                    'removed_on': work_date.isoformat(),
+                },
+            )
+
+        entry.delete()
+        refresh_daily_attendance_wage(worker, work_date)
+        SecurityAuditEvent.objects.create(
+            actor=request.user,
+            action='staff.task_work_removed',
+            target_type='staff_task_entry',
+            target_id=f'{worker.id}:{task.id}:{work_date.isoformat()}',
+            details={
+                'worker': worker.full_name,
+                'task': task.name,
+                'date': work_date.isoformat(),
+                'permanent_assignment_deactivated': bool(assignment),
+            },
+        )
+        return Response({'removed': True, 'permanent_assignment_deactivated': bool(assignment)})
 
     @action(detail=False, methods=['post'])
     @transaction.atomic
