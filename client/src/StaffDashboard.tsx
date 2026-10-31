@@ -59,9 +59,11 @@ const dailyAttendanceWage = (date: string, attended: boolean, outputQuantity: st
     : units >= 15 ? 7000 : units >= 12 ? 6000 : units >= 10 ? 5000 : units >= 8 ? 4000 : null;
   return tierWage ?? (wageOverride.trim() ? Number(wageOverride) : 0);
 };
-const dailyAttendanceTier = (outputQuantity: string | number) => {
+const dailyAttendanceTier = (date: string, outputQuantity: string | number) => {
   const units = Number(outputQuantity);
-  return units >= 15 ? '15+ units' : units >= 12 ? '12–14 units' : units >= 10 ? '10–11 units' : units >= 8 ? '8–9 units' : 'Below 8 units';
+  return units >= 15 ? '15+ units' : units >= 12 ? '12–14 units' : isSunday(date)
+    ? units >= 8 ? '8–11 units' : 'Below 8 units'
+    : units >= 10 ? '10–11 units' : units >= 8 ? '8–9 units' : 'Below 8 units';
 };
 const targetTierPayout = (unitsWorked: number, tiers: StaffTaskTargetTier[]) =>
   tiers.filter((tier) => unitsWorked >= tier.target_quantity)
@@ -694,7 +696,7 @@ function DailyAttendancePanel({ period, workers, locked, selectedWorkerId, month
           </div>
           {workerTaskEntries.map((entry) => <small className="staff-inline-task-assigned" key={entry.id}>{entry.task_name} assigned</small>)}
         </td>
-        <td>{worker.pay_basis === 'daily' ? <span className="staff-attendance-calculated-wage"><strong>{currency(hasTaskAssignment ? taskPay : wage)}</strong><small>{hasTaskAssignment ? 'Assigned task pay only' : dailyAttendanceTier(draft.output_quantity)}</small></span> : <span className="staff-attendance-not-applicable">—</span>}{needsSupervisorOverride && <label className="staff-attendance-override">Supervisor override (UGX)<input type="number" min="0" step="0.01" aria-label={`${worker.full_name} supervisor wage override for ${date}`} placeholder="0 = no override" value={draft.daily_wage_override} disabled={locked} onChange={(event) => updateDraft(worker, { daily_wage_override: event.target.value })}/></label>}</td>
+        <td>{worker.pay_basis === 'daily' ? <span className="staff-attendance-calculated-wage"><strong>{currency(hasTaskAssignment ? taskPay : wage)}</strong><small>{hasTaskAssignment ? 'Assigned task pay only' : dailyAttendanceTier(date, draft.output_quantity)}</small></span> : <span className="staff-attendance-not-applicable">—</span>}{needsSupervisorOverride && <label className="staff-attendance-override">Supervisor override (UGX)<input type="number" min="0" step="0.01" aria-label={`${worker.full_name} supervisor wage override for ${date}`} placeholder="0 = no override" value={draft.daily_wage_override} disabled={locked} onChange={(event) => updateDraft(worker, { daily_wage_override: event.target.value })}/></label>}</td>
       </tr>;
     })}</tbody></table></div> : attendanceWorkers.length ? <div className="staff-history-empty">No workers match “{workerSearch}”.</div> : <div className="staff-history-empty">Add an active worker to record attendance.</div>}
     <div className="staff-attendance-footer"><span>{locked ? 'Attendance is locked because payroll has been generated for this month.' : 'Daily-paid workers’ attendance wages are totaled into payroll.'}</span><button className="catalog-button catalog-button-primary" onClick={() => void saveAttendance()} disabled={!attendanceWorkers.length || loading || saving || locked || date > today}>{saving ? 'Saving…' : 'Save attendance'}</button></div>
