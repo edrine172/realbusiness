@@ -588,7 +588,7 @@ class StaffPayrollTests(APITestCase):
         self.assertEqual(duplicate.status_code, 400)
         self.assertFalse(StaffTaskEntry.objects.exists())
 
-    def test_target_task_pays_full_amount_independent_of_units_worked(self):
+    def test_target_task_pay_uses_highest_reached_tier_and_recalculates_before_payroll(self):
         worker = self.create_worker()
         missing_target = self.client.post('/api/staff/tasks/', {
             'name': 'Pack cartons without target',
@@ -646,14 +646,44 @@ class StaffPayrollTests(APITestCase):
             self.assertEqual(recorded.data[0]['target_tiers'], task.data['target_tiers'])
             self.assertEqual(recorded.data[0]['units_worked'], units)
 
+        updated_tiers = [
+            {'target_quantity': 10, 'amount': '800.00'},
+            {'target_quantity': 12, 'amount': '1100.00'},
+            {'target_quantity': 15, 'amount': '1600.00'},
+        ]
+        updated_task = self.client.patch(
+            f'/api/staff/tasks/{task_id}/',
+            {'target_tiers': updated_tiers},
+            format='json',
+        )
+        self.assertEqual(updated_task.status_code, 200, updated_task.data)
+        updated_entries = self.client.get('/api/staff/task-entries/?period=2025-02')
+        self.assertEqual(updated_entries.status_code, 200)
+        self.assertTrue(all(entry['target_tiers'] == updated_task.data['target_tiers'] for entry in updated_entries.data))
+
         dashboard = self.client.get('/api/staff/dashboard/?period=2025-02').data
-        self.assertEqual(dashboard['workers'][0]['period_task_pay'], Decimal('6000.00'))
-        self.assertEqual(dashboard['summary']['gross_total'], Decimal('1006000.00'))
+        self.assertEqual(dashboard['workers'][0]['period_task_pay'], Decimal('3500.00'))
+        self.assertEqual(dashboard['summary']['task_pay_total'], Decimal('3500.00'))
+        self.assertEqual(dashboard['summary']['gross_total'], Decimal('1003500.00'))
 
         payroll = self.client.post('/api/staff/payroll-runs/generate/', {'period': '2025-02'}, format='json')
         self.assertEqual(payroll.status_code, 201)
-        self.assertEqual(payroll.data['lines'][0]['task_pay'], '6000.00')
-        self.assertEqual(payroll.data['lines'][0]['gross_pay'], '1006000.00')
+        self.assertEqual(payroll.data['lines'][0]['task_pay'], '3500.00')
+        self.assertEqual(payroll.data['lines'][0]['gross_pay'], '1003500.00')
+
+        updated_after_payroll = [
+            {'target_quantity': 10, 'amount': '900.00'},
+            {'target_quantity': 12, 'amount': '1200.00'},
+            {'target_quantity': 15, 'amount': '1800.00'},
+        ]
+        changed_after_generation = self.client.patch(
+            f'/api/staff/tasks/{task_id}/',
+            {'target_tiers': updated_after_payroll},
+            format='json',
+        )
+        self.assertEqual(changed_after_generation.status_code, 200)
+        unchanged_payroll = self.client.get('/api/staff/payroll-runs/').data[0]
+        self.assertEqual(unchanged_payroll['lines'][0]['task_pay'], '3500.00')
 
     def test_permanent_task_assignments_create_pay_entries_only_for_attended_days(self):
         worker = self.create_worker()
