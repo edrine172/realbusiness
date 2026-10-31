@@ -96,7 +96,7 @@
 .staff-worker-earnings{width:100%;border-collapse:collapse;text-align:left}
 .staff-worker-earnings th{padding:7px 10px;background:#f8faff;color:#78859a;font-size:7px;letter-spacing:.35px}
 .staff-worker-earnings td{padding:7px 10px;border-top:1px solid #eef1f5;color:#526177;font-size:8px}
-.staff-worker-earnings td:last-child{color:#27704e;font-weight:700;white-space:nowrap}
+.staff-worker-earnings td:last-child{color:#27704e;font-weight:700;white-space:nowrap}.staff-worker-earnings td:last-child small{display:block;margin-top:3px;color:#718096;font-size:7px;font-weight:400;line-height:1.4;white-space:normal}
 .staff-worker-earnings-empty{text-align:center;color:#8793a5!important;font-weight:400!important}
 .staff-roster-worker-link{cursor:pointer}
 .staff-roster-worker-link:hover strong,.staff-roster-worker-link.is-selected strong{color:#245bc1;text-decoration:underline;text-underline-offset:2px}

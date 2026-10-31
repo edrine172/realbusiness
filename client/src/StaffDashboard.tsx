@@ -609,9 +609,31 @@ function DailyAttendancePanel({ period, workers, locked, selectedWorkerId, month
     <div className="staff-attendance-workers" role="group" aria-label="Select a worker calendar"><button type="button" className={!selectedWorkerId ? 'is-selected' : ''} aria-pressed={!selectedWorkerId} onClick={() => onSelectedWorkerChange(null)}>All workers</button>{filteredPeriodWorkers.map((worker) => <button type="button" key={worker.id} className={selectedWorkerId === worker.id ? 'is-selected' : ''} aria-pressed={selectedWorkerId === worker.id} onClick={() => onSelectedWorkerChange(worker.id)}><strong>{worker.full_name}</strong><small>{worker.job_title}</small></button>)}{searchTerm && !filteredPeriodWorkers.length && <span className="staff-worker-search-empty">No workers found.</span>}</div>
     {selectedWorker && <section className="staff-worker-month-earnings" aria-label={`${selectedWorker.full_name} earnings for ${periodLabel(period)}`}>
       <div className="staff-worker-month-total"><span><small>{selectedWorker.pay_basis === 'daily' ? 'EARNED THIS MONTH' : 'MONTHLY PAYROLL GROSS'} · {periodLabel(period)}</small><strong>{currency(selectedWorkerMonthTotal)}</strong></span><span>{selectedWorker.pay_basis === 'daily' ? `${selectedWorkerDaysWorked} paid work ${selectedWorkerDaysWorked === 1 ? 'day' : 'days'}` : `${selectedWorker.pay_basis_display} · payroll gross`}</span></div>
-      {selectedWorker.pay_basis !== 'daily' && <p className="staff-worker-month-note">This worker is not paid by the day. Daily attendance is listed below; daily earnings are not calculated for this pay basis.</p>}
+      {selectedWorker.pay_basis !== 'daily' && <p className="staff-worker-month-note">This worker is not paid by the day. Daily attendance is listed below; assigned task earnings are shown for each recorded date.</p>}
       <div className="staff-worker-earnings-scroll"><table className="staff-worker-earnings"><thead><tr><th>DATE</th><th>ATTENDANCE</th><th>UNITS</th><th>SUPERVISOR OVERRIDE</th><th>DAILY EARNINGS</th></tr></thead><tbody>
-        {selectedWorkerAttendance.map((record) => <tr key={record.id}><td>{new Date(`${record.date}T00:00:00`).toLocaleDateString('en-UG', { weekday: 'short', day: 'numeric', month: 'short' })}</td><td>{record.attended ? 'Worked' : 'Did not work'}</td><td>{record.attended && selectedWorker.pay_basis === 'daily' ? record.output_quantity.toLocaleString() : '—'}</td><td>{record.daily_wage_override === null ? '—' : currency(record.daily_wage_override)}</td><td>{selectedWorker.pay_basis === 'daily' ? currency(record.attended ? record.daily_wage : 0) : 'Not calculated'}</td></tr>)}
+        {selectedWorkerAttendance.map((record) => {
+          const workerDayTasks = taskEntries.filter((entry) =>
+            entry.worker === selectedWorker.id && entry.date === record.date);
+          const taskPay = workerDayTasks.reduce(
+            (total, entry) => total + taskEntryPay(entry, taskEntries),
+            0,
+          );
+          const dailyEarnings = workerDayTasks.length
+            ? taskPay
+            : selectedWorker.pay_basis === 'daily'
+              ? record.attended ? Number(record.daily_wage) : 0
+              : null;
+          return <tr key={record.id}>
+            <td>{new Date(`${record.date}T00:00:00`).toLocaleDateString('en-UG', { weekday: 'short', day: 'numeric', month: 'short' })}</td>
+            <td>{record.attended ? 'Worked' : 'Did not work'}</td>
+            <td>{record.attended && selectedWorker.pay_basis === 'daily' ? record.output_quantity.toLocaleString() : '—'}</td>
+            <td>{record.daily_wage_override === null ? '—' : currency(record.daily_wage_override)}</td>
+            <td>{dailyEarnings === null ? 'Not calculated' : <>
+              {currency(dailyEarnings)}
+              {workerDayTasks.length > 0 && <small>{workerDayTasks.map((entry) => `${entry.task_name}: ${currency(taskEntryPay(entry, taskEntries))}`).join(' · ')}</small>}
+            </>}</td>
+          </tr>;
+        })}
         {!selectedWorkerAttendance.length && <tr><td colSpan={5} className="staff-worker-earnings-empty">No attendance has been recorded for this worker in {periodLabel(period)}.</td></tr>}
       </tbody></table></div>
     </section>}
